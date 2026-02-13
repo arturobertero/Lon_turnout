@@ -1,0 +1,318 @@
+---
+title: "3_Models"
+author: "Arturo Bertero"
+date: "2026-02-09"
+output: html_document
+---
+
+```{r}
+#clean
+rm(list = ls())
+
+library("pacman")
+p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, broom,
+       marginaleffects, ggeffects)
+
+```
+
+
+# Input
+
+```{r}
+# Export to RDS
+lon_turn_df = readRDS(here("Input", "data_clean.rds"))
+```
+
+# Processing
+
+```{r}
+# # weights
+# ess_design <- svydesign(
+#   ids = ~psu, 
+#   strata = ~stratum, 
+#   weights = ~anweight, 
+#   data = lon_turn_df, 
+#   nest = TRUE
+# )
+```
+
+## Country models
+
+### M1 and M2: lon and si in isolation
+
+```{r}
+# 1. Run the Models across all countries
+m1_m2_results <- lon_turn_df %>%
+  mutate(
+    lon_n = as.numeric(lon),
+    si_n  = as.numeric(si_levels)
+  ) %>%
+  group_by(cntry) %>%
+  nest() %>%
+  mutate(
+    # M1: Effect of Loneliness
+    model1 = map(data, ~glm(vote ~ lon_n + gender + age_centered + educ + hhincome, 
+                             data = .x, family = binomial)),
+    # M2: Effect of Social Isolation
+    model2 = map(data, ~glm(vote ~ si_n + gender + age_centered + educ + hhincome, 
+                             data = .x, family = binomial))
+  ) %>%
+  # 2. Extract and Tidy (Converting to Odds Ratios)
+  mutate(
+    tidy1 = map(model1, ~tidy(.x, conf.int = TRUE, exponentiate = TRUE)),
+    tidy2 = map(model2, ~tidy(.x, conf.int = TRUE, exponentiate = TRUE))
+  ) %>%
+  select(cntry, tidy1, tidy2) %>%
+  pivot_longer(cols = starts_with("tidy"), names_to = "model_source", values_to = "estimates") %>%
+  unnest(estimates) %>%
+  filter(term %in% c("lon_n", "si_n")) %>%
+  mutate(
+    predictor = if_else(term == "lon_n", "Loneliness (M1)", "Social Isolation (M2)"),
+    significant = conf.low > 1 | conf.high < 1
+  ) %>%
+  ungroup()
+
+# 3. Simplified Plotting Function
+# We use reorder(cntry, estimate) to sort by the Odds Ratio magnitude
+p_m1_m2_simple <- ggplot(m1_m2_results, aes(x = reorder(cntry, estimate), 
+                                            y = estimate, color = significant)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), size = 0.5) +
+  facet_wrap(~predictor, scales = "free", ncol = 1) + # Use free scales to keep order meaningful
+  coord_flip() +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "#d7191c")) +
+  theme(
+    strip.background = element_rect(fill = "grey95", color = NA),
+    strip.text = element_text(face = "bold"),
+    axis.text.y = element_text(size = 7),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Turnout Odds Ratios: Loneliness vs. Social Isolation",
+    subtitle = "Odds Ratio < 1 indicates a negative effect. Red = Significant (p < .05).",
+    x = "Country", 
+    y = "Odds Ratio (Exponentiated Coefficients)",
+    caption = "Controls: Age, Gender, Education, Income. Estimated separately per country."
+  )
+
+# 4. Save
+ggsave(here("Output", "Models", "M1_M2.png"), 
+       p_m1_m2_simple, width = 10, height = 12)
+```
+
+### M3: sil_type
+
+```{r}
+# 1. Run the Models and Get Predictions (Same logic as before, but keeping data tidy)
+m3_probs_clean <- lon_turn_df %>%
+  group_by(cntry) %>%
+  nest() %>%
+  mutate(model = map(data, ~glm(vote ~ sil_type + gender + age_centered + educ + hhincome, 
+                                 data = .x, family = binomial))) %>%
+  mutate(preds = map(model, function(m) {
+    pred_data <- expand.grid(
+      sil_type = levels(lon_turn_df$sil_type),
+      gender   = levels(lon_turn_df$gender)[1],
+      educ     = levels(lon_turn_df$educ)[1],
+      hhincome = levels(lon_turn_df$hhincome)[1],
+      age_centered = 0
+    )
+    p_link <- predict(m, newdata = pred_data, type = "link", se.fit = TRUE)
+    pred_data %>%
+      mutate(
+        prob  = plogis(p_link$fit),
+        lower = plogis(p_link$fit - 1.96 * p_link$se.fit),
+        upper = plogis(p_link$fit + 1.96 * p_link$se.fit)
+      )
+  })) %>%
+  select(cntry, preds) %>%
+  unnest(preds)
+
+# 2. Define Plotting Function
+# This creates a 'staircase' plot for each country facet
+plot_m3_by_country <- function(data_subset, batch_name) {
+  ggplot(data_subset, aes(x = sil_type, y = prob, color = sil_type)) +
+    geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.6) +
+    facet_wrap(~cntry, ncol = 3) +
+    scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1.0)) +
+    scale_color_brewer(palette = "RdYlBu", direction = -1) + # Red for High/High, Blue for Low/Low
+    theme(
+      axis.text.x = element_blank(), # Legend explains the levels
+      axis.ticks.x = element_blank(),
+      strip.background = element_rect(fill = "grey95", color = NA),
+      strip.text = element_text(face = "bold"),
+      legend.position = "bottom",
+      legend.text = element_text(size = 8),
+      panel.grid.minor = element_blank()
+    ) +
+    labs(
+      title = paste("The Turnout Gap: Loneliness & Isolation -", batch_name),
+      subtitle = "Predicted Probabilities of Voting. Comparing the 4 typology groups within each country.",
+      x = NULL, y = "Prob. of Voting",
+      color = "Typology Group"
+    )
+}
+
+# 3. Batch and Save
+unique_countries <- unique(m3_probs_clean$cntry)
+p_m3_b1 <- plot_m3_by_country(filter(m3_probs_clean, cntry %in% unique_countries[1:15]), "Batch 1")
+p_m3_b2 <- plot_m3_by_country(filter(m3_probs_clean, cntry %in% unique_countries[16:30]), "Batch 2")
+
+ggsave(here("Output", "Models", "M3_Probabilities_Batch1.png"), p_m3_b1, width = 12, height = 15)
+ggsave(here("Output", "Models", "M3_Probabilities_Batch2.png"), p_m3_b2, width = 12, height = 15)
+```
+
+### M4: lon + si
+
+```{r}
+#1. Run M4 for each country
+# vote = lon_n + si_n + controls
+m4_results <- lon_turn_df %>%
+  mutate(
+    lon_n = as.numeric(lon),
+    si_n  = as.numeric(si_levels)
+  ) %>%
+  group_by(cntry) %>%
+  nest() %>%
+  mutate(model = map(data, ~glm(vote ~ lon_n + si_n + gender + age_centered + educ + hhincome, 
+                                 data = .x, family = binomial))) %>%
+  # 2. Extract and Tidy (Exponentiate for Odds Ratios)
+  mutate(tidy_m = map(model, ~tidy(.x, conf.int = TRUE, exponentiate = TRUE))) %>%
+  unnest(tidy_m) %>%
+  filter(term %in% c("lon_n", "si_n")) %>%
+  mutate(
+    predictor = if_else(term == "lon_n", "Loneliness Penalty (adj.)", "Social Isolation Penalty (adj.)"),
+    significant = conf.low > 1 | conf.high < 1
+  ) %>%
+  ungroup()
+
+# 3. Create the Odds Ratio Plot
+# Sorted by magnitude within each facet to show the gradient of the 'penalty'
+p_m4_odds <- ggplot(m4_results, aes(x = reorder(cntry, estimate), y = estimate, color = significant)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), size = 0.5) +
+  facet_wrap(~predictor, scales = "free", ncol = 1) +
+  coord_flip() +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "#d7191c")) +
+  theme(
+    strip.background = element_rect(fill = "grey95", color = NA),
+    strip.text = element_text(face = "bold"),
+    axis.text.y = element_text(size = 7),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "M4: Independent Turnout Penalties (Additive Model)",
+    subtitle = "Odds Ratios < 1 indicate lower turnout. Each effect is adjusted for the other.",
+    x = "Country", 
+    y = "Odds Ratio (Exponentiated Coefficients)",
+    caption = "Controls: Age, Gender, Education, Income. Red = Significant (p < .05)."
+  )
+
+# 4. Save
+ggsave(here("Output", "Models", "M4_Additive_OddsRatios.png"), 
+       p_m4_odds, width = 10, height = 12)
+```
+
+### M5 lon interact with si
+
+```{r}
+# 1. Run M5 Interaction Model for each country
+m5_interaction_results <- lon_turn_df %>%
+  mutate(
+    lon_n = as.numeric(lon),
+    si_n  = as.numeric(si_levels)
+  ) %>%
+  group_by(cntry) %>%
+  nest() %>%
+  mutate(model = map(data, ~glm(vote ~ lon_n * si_n + gender + age_centered + educ + hhincome, 
+                                 data = .x, family = binomial))) %>%
+  # 2. Extract only the Interaction Term
+  mutate(tidy_m = map(model, ~tidy(.x, conf.int = TRUE))) %>%
+  unnest(tidy_m) %>%
+  filter(term == "lon_n:si_n") %>%
+  mutate(significant = conf.low > 0 | conf.high < 0) %>%
+  ungroup()
+
+# 3. Create the Significance Plot
+# Sorted by magnitude to see which countries have the strongest interaction
+p_m5_interaction_sig <- ggplot(m5_interaction_results, aes(x = reorder(cntry, estimate), 
+                                                           y = estimate, 
+                                                           color = significant)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), size = 0.6) +
+  coord_flip() +
+  scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "#e41a1c")) +
+  theme(
+    axis.text.y = element_text(size = 7),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Significance of the Double Burden Interaction (M5)",
+    subtitle = "Coefficient for lon_n:si_n. Negative = Loneliness hurts more as Isolation increases.",
+    x = "Country", 
+    y = "Interaction Coefficient (Log-Odds Estimate)",
+    caption = "Red = Significant interaction (p < .05). Controls included in each model."
+  )
+
+# 4. Save
+ggsave(here("Output", "Models", "M5_Interaction_Significance.png"), 
+       p_m5_interaction_sig, width = 8, height = 10)
+```
+
+## Multilevel model
+
+```{r}
+# Ensure numeric versions and factors are ready
+mlm_df <- lon_turn_df %>%
+  mutate(
+    lon_n = as.numeric(lon),
+    si_n  = as.numeric(si_levels)
+  ) %>%
+  filter(!is.na(vote), !is.na(lon_n), !is.na(si_n))
+
+# 2. Fit the "Final Boss" Model
+# Random intercept for country + Random slopes for Loneliness and Isolation
+# We include the interaction lon_n * si_n to test the Double Burden average
+m_final_mlm <- glmer(
+  vote ~ lon_n * si_n + gender + age_centered + educ + hhincome + 
+         (1 | cntry) + (0 + lon_n | cntry) + (0 + si_n | cntry), 
+  data = mlm_df, 
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa", 
+    optCtrl = list(maxfun = 1e5)
+  )
+)
+
+# 3. Print the Summary Table (Professional Formatting)
+tab_model(m_final_mlm, 
+          show.re.var = TRUE, 
+          pred.labels = c("Intercept", "Loneliness (Numeric)", "Social Isolation (Numeric)", 
+                          "Gender (Ref: Male)", "Age (Centered)", "Education", "Income",
+                          "Interaction: Lon x SI"),
+          title = "Table 1: Multilevel Model of Turnout in Europe",
+          file = here("Output", "Models", "Final_MLM_Table.html"))
+
+# 4. Plot the Interaction Marginal Effects (The "Verdict" Plot)
+# This shows the European average for the interaction
+mlm_preds <- predict_response(m_final_mlm, terms = c("lon_n", "si_n"))
+
+p_final_verdict <- plot(mlm_preds) +
+  scale_x_continuous(breaks = 1:3, labels = c("None", "Some", "Most/All")) +
+  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1.0)) +
+  labs(
+    title = "The European Average: Loneliness x Social Isolation",
+    subtitle = "Predicted Probabilities from the Multilevel Model (All 30 countries pooled)",
+    x = "Loneliness Frequency",
+    y = "Prob. of Voting",
+    color = "Isolation Level"
+  )
+
+# 5. Save the Verdict
+ggsave(here("Output", "Models", "Final_MLM_Interaction_Plot.png"), 
+       p_final_verdict, width = 8, height = 6)
+```
+
