@@ -1,0 +1,205 @@
+---
+title: "Report_2"
+author: "Arturo Bertero"
+date: "2026-02-25"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+# GLOBAL OPTIONS: Run all code but hide it from the final report
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.align = "center",
+  out.width = "100%"
+)
+```
+
+```{r}
+#clean
+rm(list = ls())
+
+library("pacman")
+p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, broom,
+       marginaleffects, ggeffects, knitr, htmltools)
+
+```
+
+# Introduction
+
+This short report focuses on the new multilevel models. 
+
+Minor changes w/ respect to old report: 
+
+1. Data is weighted
+2. I have imported second-last election turnout
+3. I am doing the test for random slopes justification
+4. I am doing many more multilevel models
+
+## Models I am running
+
+| Name | Structure (fixed effects + random effects) |
+|---|---|
+| **MM0: Intercept Only** | Fixed: `lon_centered + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 | cntry)` |
+| **MM1: Random Slopes** | Fixed: `lon_centered + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered | cntry)` |
+| **MM2: Additive Penalties** | Fixed: `lon_centered + si_centered + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+| **MM3: Interaction** | Fixed: `lon_centered * si_centered + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+| **MM4: Typology** | Fixed: `sil_type + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 | cntry)` |
+| **MM5: Robustness Controls** | Fixed: `lon_centered + si_centered + polint_centered + partisanship + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+| **MM6: Macro Interaction** | Fixed: `lon_centered * official_turnout_lag + si_centered + polint_centered + partisanship + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+| **MM7: Macro Control (Standard DV)** | Fixed: `lon_centered + si_centered + polint_centered + partisanship + official_turnout_lag + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+| **MM8: Macro Control (Strict DV)** | Fixed: `lon_centered + si_centered + polint_centered + partisanship + official_turnout_lag + gender + age_decades_centered + educ + hhincome`  \| Random: `(1 + lon_centered + si_centered | cntry)` |
+
+
+## Summary of results
+
+* Loneliness is associated with turnout
+* Social isolation adds to loneliness, but no interaction
+* Hence, the typology var works (high L high SI are the least likely to vote)
+* These findings hold when considering partisanship and political interest
+* Lagged official turnout shares are important, but do not moderate the loneliness-turnout link
+
+## Results
+
+### Justifying random slopes for L and SI
+
+Below the output of a likelihood ratio test. The logic is to start from a simpler
+specification and then ask whether allowing additional country-level heterogeneity 
+significantly improves model fit. 
+
+In this first test we are comaparing the basiline model with and without random slopes for L. 
+Since the test is significant we should model random slopes for L.
+
+| Model | Random effects structure | npar | AIC | BIC | logLik | -2*log(L) | Chisq | Df | Pr(>Chisq) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **mm0_intercept** | `(1 \| cntry)` | 10 | 38095 | 38182 | -19037 | 38075 |  |  |  |
+| **mm1_base** | `(1 + lon_centered \| cntry)` | 12 | 37954 | 38058 | -18965 | 37930 | 145.03 | 2 | < 2.2e-16 *** |
+
+
+I now extend the same logic comparing:
+
+1. random intercept only
+2. random intercept + random slopes for L
+3. random intercept + random slopes for L + random slopes for SI
+
+We should use both!
+
+| Model | Random effects structure | npar | AIC | BIC | logLik | -2*log(L) | ΔChisq | ΔDf | Pr(>Chisq) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **test0_intercept** | `(1 \| cntry)` | 11 | 37617 | 37713 | -18798 | 37595 |  |  |  |
+| **test1_lon_slope** | `(1 + lon_centered \| cntry)` | 13 | 37487 | 37600 | -18730 | 37461 | 134.481 | 2 | < 2.2e-16 *** |
+| **test2_both_slopes** | `(1 + lon_centered + si_centered \| cntry)` | 16 | 37424 | 37563 | -18696 | 37392 | 69.252 | 3 | 6.173e-15 *** |
+
+### MM0-MM1
+
+```{r results='asis'}
+includeHTML(here("Output", "Models", "Table_Justification_MM0_MM1.html"))
+```
+
+* MM0 and MM1 compare a random-intercept specification to a model that also allows the loneliness slope to vary across countries.
+* The random slope variance for lon_centered is non-zero: we should do random slope
+* loneliness is negatively associated with turnout across the EU
+
+### MM2
+
+```{r results='asis'}
+includeHTML(here("Output", "Models", "Table_MM2_Additive.html"))
+```
+
+* Adding social isolation shows that both loneliness and social isolation independently predict lower turnout
+
+Caterpillar plot for the intercept
+
+```{r}
+include_graphics(here("Output", "Models", "MM2_Caterpillar_Intercept.png"))
+```
+
+Caterpillar plot for the random slopes of L
+
+```{r}
+include_graphics(here("Output", "Models", "MM2_Caterpillar_Loneliness.png"))
+```
+
+Caterpillar plot for the random slopes of SI
+
+```{r}
+include_graphics(here("Output", "Models", "MM2_Caterpillar_SI.png"))
+```
+
+
+### MM3
+
+```{r}
+includeHTML(here("Output", "Models", "Table_MM3_Interaction.html"))
+```
+
+* The interaction term is not significant: SI and L do not multiply each other
+* loneliness and isolation only operate additively
+
+Non significant interaction plot
+
+```{r}
+include_graphics(here("Output", "Models", "MM3_Additive_Lines.png"))
+```
+
+### MM4
+
+```{r}
+includeHTML(here("Output", "Models", "Table_MM4_Typology.html"))
+```
+
+* The group with high L and high SI is the most disengaged
+
+Predicted turnout by SIL levels
+
+```{r}
+include_graphics(here("Output", "Models", "MM4_Typology_Staircase.png"))
+```
+
+### MM5
+
+```{r}
+includeHTML(here("Output", "Models", "Table_MM5_Robustness.html"))
+```
+
+* Political interest and partisanship work
+* But L and SI remain significant
+
+Coefficient plot:
+
+```{r}
+include_graphics(here("Output", "Models", "MM5_Robustness_Forest.png"))
+```
+
+
+### M6
+
+```{r}
+includeHTML(here("Output", "Models", "Table_MM6_Macro.html"))
+```
+
+* This model is the one with the lagged national turnout
+* The cross level interaction is not significant
+* This is amazing, cause it says that SIL -> turnout works like a strong psychological mechanism: it works regardless of national turnout habbits
+
+
+### MM7 and MM8
+
+```{r}
+includeHTML(here("Output", "Models", "Table_Robustness_StrictVote.html"))
+```
+
+* When removing the interaction, L is significant again
+* Our main effects hold when using a stricter DV
+
+Coefficient plot:
+
+```{r}
+include_graphics(here("Output", "Models", "Robustness_Strict_vs_Standard.png"))
+```
+

@@ -1,0 +1,404 @@
+---
+title: "Lon_turn - Report 1"
+author: "Arturo Bertero"
+date: "2026-02-14"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+  pdf_document:
+    toc: true
+    number_sections: true
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+# GLOBAL OPTIONS: Run all code but hide it from the final report
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.align = "center",
+  out.width = "100%"
+)
+```
+
+```{r}
+#clean
+rm(list = ls())
+
+library("pacman")
+p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, broom,
+       marginaleffects, ggeffects, knitr, htmltools)
+
+```
+
+
+# Introduction
+
+This is a report illustrating preliminary analyses done for a project where we investigate the link
+between Loneliness (L), Social Isolation (SI), and Turnout (T). We use the last round
+of the ESS. The file is focused on showing you my analyses, just few words and many plots. 
+
+## Research design diagram
+
+                     ┌──────────────────────────┐
+                     │  ESS Round 11 (EU)       │
+                     │  Individuals nested      │
+                     │  within Countries        │
+                     └─────────────┬────────────┘
+                                   │
+                 ┌─────────────────┴─────────────────┐
+                 │                                   │
+         Loneliness (L)                     Social Isolation (SI)
+        (1–4 ordinal scale)             (Index from structural +
+                                            relational items)
+                 │                                   │
+                 └──────────────┬────────────────────┘
+                                │
+                         Interaction (L × SI)
+                                │
+                                ▼
+                      Electoral Turnout (0/1)
+                                │
+                  Controls: gender, age, education,
+                           household income
+                                │
+                                ▼
+            ┌────────────────────────────────────────┐
+            │  Modelling Strategy                    │
+            │  Country-specific logits               │
+            │  Multilevel models (EU-level)          │
+            └────────────────────────────────────────┘
+
+## RQ 
+
+While prior comparative research documents an association between loneliness and turnout, existing studies rarely account for the strong correlation between loneliness (L) and social isolation (SI). Because social isolation is structurally linked to both loneliness and civic engagement, failing to model them jointly may bias estimates of the loneliness-turnout relationship.
+
+The study addresses four core research questions:
+
+1. Does loneliness correlate with electoral turnout within European countries?
+2. Does social isolation correlate with electoral turnout?
+3. Do loneliness and social isolation interact in predicting turnout?
+4. Which combinations of loneliness and isolation (mismatch profiles) are most electorally disengaged?
+
+The idea is that we want to have a deeper look at this typology, and at the political behavior of people
+in all these cells:
+
+### Loneliness × Social Isolation Typology
+
+|                      | **Low Social Isolation** | **High Social Isolation** |
+|----------------------|--------------------------|---------------------------|
+| **Low Loneliness**   | Integrated & not lonely  | Structurally isolated but resilient |
+| **High Loneliness**  | Lonely despite integration (“mismatch”) | Double disconnected |
+
+
+
+
+
+
+## Variables
+
+| Var            | Description (wording)                                                                                                    | Type / coding                                                   | Status            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ----------------- |
+| `vote`         | Voted in last national election?                                                                                         | Binary (0/1)                                                    | **DV**            |
+| `vote_recall`  | Which party did you vote for?                                                                                            | Categorical/text                                                | DV (robustness)   |
+| `lon`          | Loneliness (1-4 scale)                                                                                                   | Ordinal; aggregated into **3 levels**                           | **IV**            |
+| `si_levels`    | Social Isolation Index                                                                                                   | Index built from multiple dummies; aggregated into **3 levels** | **IV**            |
+| `sil_type`     | Loneliness × Social Isolation typology                                                                                   | **4-level** categorical (Low/High L × Low/High SI)              | **IV**            |
+| `hhsize`       | “Including yourself, how many people currently live in this household?”                                                  | Dummy component for SI (e.g., lives alone vs others)            | IV (SI component) |
+| `meet`         | “How often do you meet socially with friends, relatives or colleagues?”                                                  | Dummy component for SI (low contact vs higher)                  | IV (SI component) |
+| `relig`        | “Apart from special occasions such as weddings and funerals, about how often do you attend religious services nowadays?” | Dummy component for SI (low attendance vs higher)               | IV (SI component) |
+| `volount`      | Do you do volunteering?                                                                                                  | Dummy component for SI (no vs yes)                              | IV (SI component) |
+| `discuss`      | “How often do you have a person with whom you can discuss personal matters?”                                             | Dummy component for SI (low availability vs higher)             | IV (SI component) |
+| `unemp`        | “Which of these descriptions best describes your situation (main activity) in the last seven days?”                      | Dummy component for SI (unemployed / out of work vs others)     | IV (SI component) |
+| `gender`       | Respondent gender                                                                                                        | Categorical                                                     | **Control**       |
+| `age_centered` | Age (centered within country)                                                                                            | Continuous                                                      | **Control**       |
+| `educ`         | Education level                                                                                                          | Categorical/ordinal                                             | **Control**       |
+| `hhincome`     | Household income category                                                                                                | Categorical/ordinal                                             | **Control**       |
+
+
+## Operationalization
+
+### Social isolation
+
+Social isolation is operationalized as an index constructed from structural and relational components
+inspired by validated approaches (Berkman-Syme SNI; Lubben LSNS). The item pool includes:
+
+* Household composition (living alone / partnership) -> 1 if the respondent lives alone
+* Frequency of social meetings -> 1 if the respondent meets others "once a month" or less
+* Unemployed -> 1 for unemployed people
+* Volunteering -> 1 if people don't do this
+* Religious attendance -> 1 if the respondent "never" or "hardly ever" attends services
+* Discussion -> 1 if the respondent has "no one" or reports "rarely" having a person to talk to.
+
+I tried putting other variables in the index (e.g.: marital status), but VIF hated this, hence they are removed. 
+
+The final index has a 0-6 scale, but is recoded in 3 due to small percentages of ppl in the extreme category
+
+### Loneliness
+
+Originally 1-4 scale, but recoded in 1-3 for the same reason as above. 
+
+### SI-L Typology
+
+This is a 4-level variable:
+
+1. Low L / Low SI
+2. Low L / High SI
+3. High L / Low SI
+4. High L / High SI
+
+Cutoffs are defined using within-country median splits, producing a relative measure invariant to cross-national scale differences.
+
+## Models
+
+Country logit models are:
+
+* M1: vote =  loneliness + gender + age_centered + educ + hhincome
+* M2: vote = social isolation + gender + age_centered + educ + hhincome
+* M3: vote = SIL typology + gender + age_centered + educ + hhincome
+
+M1-M3 are baseline models establishing the association between L, SI and turnout. 
+
+* M4: vote = lon_n + si_n + gender + age_centered + educ + hhincome
+* M5: vote = lon_n * si_n + gender + age_centered + educ + hhincome
+
+M4 tests if the effects of SI and L holds when considering them jointly. 
+M5 looks at their interaction. 
+
+Multilevel model: Generalized Linear Mixed Model (GLMM) to the pooled sample of 44,315 observations. This model accounts for the nested nature of the data by including **random intercepts for countries** and **random slopes** for our primary predictors.
+
+# Report on the analyses
+
+Ok now the fun begin! Plots and tables below.
+
+## Decriptives
+
+In this section I show:
+
+1. Loneliness distribution
+2. Distributions and corrs between the dummies composing SI
+3. Descriptives on the final SI index
+4. The composition of the typoligy var
+5. Validation of turnout measure and of SI (convergent and discrimnant validity)
+6. Relationship between SI - L - T
+
+### Loneliness
+
+#### Country means
+
+```{r}
+include_graphics(here("Output", "Measures", "Lon_Means_CI_Original.png"))
+```
+
+#### Country levels
+
+```{r}
+include_graphics(here("Output", "Measures", "loneliness_proportions_by_country.png"))
+```
+
+
+### Social isolation
+
+#### Distribution of its components 
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Distributions_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Distributions_B2.png"))
+```
+
+#### Correlation of its components
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Correlations_Labels_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Correlations_Labels_B2.png"))
+```
+
+#### VIF
+
+Can we throw all these vars in an index or they eat the same variance? We can :)
+
+| cntry | hhsize_iso | meet_iso | relig_iso | volunt_iso | discuss_iso | unemp_iso |
+|------|------------|----------|-----------|------------|-------------|-----------|
+| AT | 1.001332424 | 1.021087167 | 1.014186796 | 1.021950557 | 1.027868307 | 1.003264385 |
+| BE | 1.031606800 | 1.054586064 | 1.027398518 | 1.018014700 | 1.062841482 | 1.009435060 |
+| BG | 1.043412923 | 1.111722859 | 1.002009572 | 1.008300549 | 1.138535675 | 1.003838413 |
+| CH | 1.023616697 | 1.010394149 | 1.008764518 | 1.033065378 | 1.023473436 | 1.002638978 |
+| CY | 1.051195552 | 1.063250565 | 1.003662640 | 1.029411215 | 1.071649331 | 1.010703315 |
+| DE | 1.011207359 | 1.066361627 | 1.035671847 | 1.040738617 | 1.066181889 | 1.006666520 |
+| EE | 1.015515921 | 1.047166912 | 1.014837906 | 1.027189559 | 1.069402795 | 1.004137203 |
+| ES | 1.008975084 | 1.021997280 | 1.008193593 | 1.019279283 | 1.033064583 | 1.002902325 |
+| FI | 1.009629207 | 1.008756580 | 1.026418139 | 1.030943779 | 1.013171458 | 1.005869935 |
+| FR | 1.008618350 | 1.022832902 | 1.015502027 | 1.023008238 | 1.032002251 | 1.007342110 |
+| GB | 1.004473657 | 1.050423569 | 1.006638848 | 1.027658427 | 1.051956812 | 1.004149652 |
+| GR | 1.023720967 | 1.044884727 | 1.016242312 | 1.010434208 | 1.008475145 | 1.004330936 |
+| HR | 1.022172780 | 1.033774858 | 1.007282231 | 1.018894342 | 1.051965729 | 1.002096255 |
+| HU | 1.033753699 | 1.137839643 | 1.016574976 | 1.009948691 | 1.125469043 | 1.001379104 |
+| IE | 1.029297935 | 1.051249066 | 1.017548066 | 1.018244672 | 1.067520221 | 1.006974332 |
+| IL | 1.008129260 | 1.031301522 | 1.065751535 | 1.060744014 | 1.058503335 | 1.011099494 |
+| IS | 1.015414331 | 1.034287336 | 1.057854265 | 1.072394469 | 1.026899747 | 1.005089313 |
+| IT | 1.015351146 | 1.080973362 | 1.013172631 | 1.020887115 | 1.087493830 | 1.006593557 |
+| LT | 1.006498482 | 1.056213306 | 1.006122137 | 1.018868680 | 1.048818242 | 1.010448295 |
+| LV | 1.010515152 | 1.089318416 | 1.015626187 | 1.039319273 | 1.114495269 | 1.009706087 |
+| ME | 1.011607944 | 1.019448928 | 1.019485981 | 1.016303655 | 1.004495293 | 1.011601796 |
+| NL | 1.015141384 | 1.034254495 | 1.035252509 | 1.046456509 | 1.042825842 | 1.000923461 |
+| NO | 1.003053743 | 1.017549933 | 1.017685011 | 1.019720485 | 1.014539914 | 1.006587786 |
+| PL | 1.006741028 | 1.032814592 | 1.009866570 | 1.009794596 | 1.033588326 | 1.001783752 |
+| PT | 1.006269478 | 1.045171752 | 1.005485967 | 1.008817157 | 1.055488031 | 1.003840680 |
+| RS | 1.022073039 | 1.049423828 | 1.023771074 | 1.013713100 | 1.049517109 | 1.010899327 |
+| SE | 1.009525960 | 1.046728931 | 1.040973015 | 1.054584868 | 1.044089787 | 1.007763247 |
+| SI | 1.009912372 | 1.035916921 | 1.007293286 | 1.022030034 | 1.039394083 | 1.006021302 |
+| SK | 1.012232971 | 1.046179094 | 1.007186321 | 1.007233656 | 1.057531969 | 1.007233598 |
+| UA | 1.011595370 | 1.064462444 | 1.002872405 | 1.017930770 | 1.063200471 | 1.001878463 |
+
+#### Levels by country
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Proportions_Stacked.png"))
+```
+
+### Social isolation and lonelines - typology
+
+```{r}
+include_graphics(here("Output", "Measures", "SIL_Heatmap_SingleColor_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SIL_Heatmap_SingleColor_B2.png"))
+```
+
+
+### Validation
+
+#### Social isolation
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Validity_Profile_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Validity_Profile_B2.png"))
+```
+
+#### Turnout
+
+```{r}
+include_graphics(here("Output", "Measures", "Turnout_Validation_Bars_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "Turnout_Validation_Bars_B2.png"))
+```
+
+### Relationship between SI / L / SIL with turnout
+
+#### Lon and turnout
+
+This association seems linear
+
+```{r}
+include_graphics(here("Output", "Measures", "Lon_Turnout1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "Lon_Turnout2.png"))
+```
+
+#### SI and turnout
+
+This association seems linear
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Levels_Turnout_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SI_Levels_Turnout_B2.png"))
+```
+
+#### Typology (SIL) and turnout
+
+This association is super unstable
+
+```{r}
+include_graphics(here("Output", "Measures", "SIL_Turnout_CI_B1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Measures", "SIL_Turnout_CI_B2.png"))
+```
+
+## Models
+
+### Country models
+
+#### M1 and M2: lon and si separately
+
+In baseline models, L works in most of the countries; SI works in all but 2 countries. 
+
+```{r}
+include_graphics(here("Output", "Models", "M1_M2.png"))
+```
+
+#### M3: SIL (typology)
+
+The typology is terrible
+
+```{r}
+include_graphics(here("Output", "Models", "M3_Probabilities_Batch1.png"))
+```
+
+```{r}
+include_graphics(here("Output", "Models", "M3_Probabilities_Batch2.png"))
+```
+
+#### M4: L + SI
+
+When you include both variables in a model, SI eats most of the variance, L is now not significant in most countries
+
+```{r}
+include_graphics(here("Output", "Models", "M4_Additive_OddsRatios.png"))
+```
+
+#### M5: L * SI
+
+The interaction, not the typology variable, is the true problem. It doesn't work. 
+
+```{r}
+include_graphics(here("Output", "Models", "M5_Interaction_Significance.png"))
+```
+
+### Multilevel models
+
+This is multilevel model where individuals are nested within 30 countries.
+
+The model estimates the impact of Loneliness (lon_n), Social Isolation (si_n), and their Interaction (lon_n * si_n) on the probability of voting, while controlling for gender, age, education, and household income.
+
+Random Effects: I included Random Intercepts to allow baseline turnout to vary by country, and Random Slopes for both loneliness and isolation to account for the possibility that these "turnout penalties" differ in strength across national contexts.
+
+```{r results='asis'}
+# Use here() for the relative path to ensure it works across machines
+includeHTML(here("Output", "Models", "Final_MLM_Table.html"))
+```
+
+Main results: 
+
+* Social Isolation (The Strongest Driver): Structural social isolation is the most robust predictor of electoral withdrawal. For every unit increase in isolation, the odds of voting decrease by 29% (OR = 0.71, $p < 0.001$).
+
+* Loneliness: Even when controlling for structural isolation, the subjective feeling of loneliness remains a significant barrier to participation. Each step up in loneliness frequency reduces the odds of voting by 18% (OR = 0.82, $p = 0.003$)
+
+* Crucially, the interaction between loneliness and isolation is not statistically significant. Look: 
+
+```{r}
+include_graphics(here("Output", "Models", "Final_MLM_Interaction_Plot.png"))
+```
+
+

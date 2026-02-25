@@ -339,7 +339,7 @@ validity_long <- lon_turn_df %>%
     lon_n      = as.numeric(lon),
     gender_n   = as.numeric(gender),
     educ_num   = as.numeric(educ),
-    inc_num    = as.numeric(hhincome),
+    inc_num    = 5 - as.numeric(hhincome),
     # Use the raw additive index (0-7) for Spearman correlation
     si_raw_n   = as.numeric(si_index_raw) 
   ) %>%
@@ -479,6 +479,8 @@ ggsave(here("Output", "Measures", "SI_Proportions_Stacked.png"), p_si_proportion
 
 ## SI-L
 
+### Typology plot
+
 ```{r}
 # 1. Prepare frequency and percentage data
 sil_dist <- lon_turn_df %>%
@@ -530,6 +532,74 @@ p_heat_b2_v2 <- plot_sil_heatmap_single(filter(sil_dist, cntry %in% batch2), "Ba
 
 ggsave(here("Output", "Measures", "SIL_Heatmap_SingleColor_B1.png"), p_heat_b1_v2, width = 12, height = 15)
 ggsave(here("Output", "Measures", "SIL_Heatmap_SingleColor_B2.png"), p_heat_b2_v2, width = 12, height = 15)
+```
+### Audit plot
+
+```{r}
+# 1. Prepare Data
+# Ensure sil_type is clean and ordered correctly for a logical stack
+# Stack order: Integrated (bottom) -> High SI -> High L -> Double Burden (top)
+sil_levels_ordered <- c("Low L, Low SI", "Low L, High SI", 
+                        "High L, Low SI", "High L, High SI")
+
+audit_data_sil <- lon_turn_df %>%
+  filter(!is.na(sil_type)) %>%
+  mutate(
+    sil_type = factor(sil_type, levels = sil_levels_ordered),
+    # Numeric version to help with country ordering (High L + High SI weights)
+    sil_n = as.numeric(sil_type)
+  )
+
+# 2. Calculate Country Order
+# We'll order by the proportion of the 'Double Burden' group (High L, High SI)
+# This makes it easy to see where the problem is most acute
+cntry_order_sil <- audit_data_sil %>%
+  group_by(cntry) %>%
+  summarise(double_burden_prop = mean(sil_type == "High L, High SI")) %>%
+  arrange(desc(double_burden_prop)) %>%
+  pull(cntry)
+
+# 3. Calculate Proportions
+plot_ready_sil <- audit_data_sil %>%
+  group_by(cntry, sil_type) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup() %>%
+  mutate(cntry = factor(cntry, levels = cntry_order_sil))
+
+# 4. Create the Stacked Bar Plot
+sil_composition_plot <- ggplot(plot_ready_sil, aes(x = cntry, y = prop, fill = sil_type)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.75, color = "white", linewidth = 0.1) +
+  scale_y_continuous(labels = scales::percent, expand = c(0, 0)) +
+  # Using viridis 'plasma' to highlight the 'High' groups with brighter colors
+  scale_fill_viridis_d(option = "plasma", end = 0.9, direction = 1) +
+  labs(
+    title = "SIL Typology Composition by Country",
+    subtitle = "Proportion of population by Loneliness (L) and Social Isolation (SI) groups. Ordered by 'Double Burden' share.",
+    x = "Country",
+    y = "Proportion of Sample",
+    fill = "Typology Group",
+    caption = "Source: ESS Round 11. Groups defined by country-specific median thresholds."
+  ) +
+  theme_bw() + 
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  ) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+
+# 5. Save as Landscape
+ggsave(here("Output", "Measures", "sil_typology_proportions_by_country.png"), 
+       plot = sil_composition_plot, 
+       width = 12, 
+       height = 7, 
+       dpi = 600)
 ```
 
 
