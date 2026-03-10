@@ -1,0 +1,2 @@
+"0","#load ess 11"
+"0","raw_data <- read_dta(here(""Input"", ""ESS11e04_1.dta""))"

@@ -1,7 +1,5 @@
 ---
 title: "2_Measures"
-author: "Arturo Bertero"
-date: "2026-02-10"
 output: html_document
 ---
 
@@ -19,28 +17,78 @@ p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, psych,
 # Input
 
 ```{r}
-# Export to RDS
+# Load
 lon_turn_df = readRDS(here("Input", "data_clean.rds"))
 ```
 
 # Processing
+
+```{r}
+# Global options for plots
+
+# Custom theme
+theme_paper <- function() {
+  theme_bw(base_size = 12) +
+    theme(
+      text = element_text(family = "serif", color = "black"), 
+      plot.title = element_text(face = "bold", size = 14, margin = margin(b = 10)),
+      plot.subtitle = element_text(size = 11, color = "grey40", margin = margin(b = 10)),
+      axis.title = element_text(face = "bold", size = 12),
+      axis.text = element_text(size = 10, color = "black"),
+      axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+      strip.background = element_blank(), 
+      strip.text = element_text(face = "bold", size = 11),
+      panel.border = element_rect(color = "black", linewidth = 0.8), 
+      panel.grid.minor = element_blank(), 
+      panel.grid.major.x = element_blank(),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank()
+    )
+}
+
+# Lock it in 
+theme_set(theme_paper())
+
+
+# SI labels
+si_clean_labels <- c(
+  "discuss" = "Discussions",
+  "discuss_iso" = "Discussions",
+  "hhsize" = "Hh size",
+  "hhsize_iso" = "Hh size",
+  "meet" = "Meetings",
+  "meet_iso" = "Meetings",
+  "relig" = "Religion",
+  "relig_iso" = "Religion",
+  "unemp" = "Unemployed",
+  "unemployed" = "Unemployed",
+  "unemp_iso" = "Unemployed",
+  "volunt" = "Volunteering",
+  "volunt_iso" = "Volunteering"
+)
+
+#Global palette
+magma_pal <- c("#0D0887FF", "#6A00A8FF", "#B12A90FF", "#E16462FF", "#FCA636FF", "#F0F921FF")
+```
+
 
 ## L
 
 ### Country means
 
 ```{r}
-# 1. Clean and Recode 'lon_orig' to numeric
+# Clean and recode
 lon_turn_df <- lon_turn_df %>%
   mutate(lon_orig_n = case_when(
     lon_orig == "None or almost none of the time" ~ 1,
     lon_orig == "Some of the time"                ~ 2,
     lon_orig == "Most of the time"                ~ 3,
     lon_orig == "All or almost all of the time"   ~ 4,
-    TRUE ~ NA_real_ # Handles "Don't know", "Refusal", "No answer"
+    TRUE ~ NA_real_ 
   ))
 
-# 2. Calculate Means and 95% Confidence Intervals by Country
+# Means and 95% ci by country
 lon_means_ci <- lon_turn_df %>%
   filter(!is.na(lon_orig_n)) %>%
   group_by(cntry) %>%
@@ -54,29 +102,23 @@ lon_means_ci <- lon_turn_df %>%
     lower = mean_lon - 1.96 * se,
     upper = mean_lon + 1.96 * se
   ) %>%
-  # Sort countries by decreasing mean loneliness
+  # Sort countries 
   arrange(desc(mean_lon)) %>%
   mutate(cntry = factor(cntry, levels = cntry))
 
-# 3. Create the Visualization (Dot Plot with CIs)
+# the plot
 p_lon_means <- ggplot(lon_means_ci, aes(x = cntry, y = mean_lon)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), color = "#d95f02", size = 0.6) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), color = magma_pal[4], size = 0.6) +
   scale_y_continuous(limits = c(1, 2.5), breaks = seq(1, 4, by = 0.5)) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank()
-  ) +
+  theme(panel.grid.minor = element_blank()) + 
   labs(
-    title = "Average Loneliness by Country (4-Level Scale)",
-    subtitle = "Mean scores with 95% Confidence Intervals. Ordered by decreasing loneliness.",
     x = "Country",
     y = "Mean Loneliness (1-4 Scale)",
-    caption = "1: None | 2: Some | 3: Most | 4: All. Error bars represent 95% CI."
+    caption = "1: None | 2: Some | 3: Most | 4: All"
   )
 
-# 4. Save the Plot
-ggsave(here("Output", "Measures", "Lon_Means_CI_Original.png"), 
+# Save
+ggsave(here("Output", "Supplement", "Lon_Means_CI_Original.png"), 
        p_lon_means, width = 11, height = 6, dpi = 300)
 ```
 
@@ -84,14 +126,7 @@ ggsave(here("Output", "Measures", "Lon_Means_CI_Original.png"),
 ### Lon levels by country
 
 ```{r}
-# Project: Lon_turn
-# File 4: Descriptive - Loneliness Composition by Country
-
-library(tidyverse)
-library(here)
-
-# 1. Prepare Data
-# We filter out non-responses and define the order of the loneliness levels
+# Prepare data
 lon_levels_ordered <- c(
   "None or almost none of the time",
   "Some of the time",
@@ -102,20 +137,20 @@ lon_levels_ordered <- c(
 audit_data_lon <- lon_turn_df %>%
   filter(lon_orig %in% lon_levels_ordered) %>%
   mutate(
-    # Ensure factor order for the legend
+    # Ensure factor order 
     lon_orig = factor(lon_orig, levels = lon_levels_ordered),
     # Numeric version for ordering countries by mean
     lon_n = as.numeric(lon_orig)
   )
 
-# 2. Calculate Country Order (by decreasing mean loneliness)
+# Calculate order 
 cntry_order_audit <- audit_data_lon %>%
   group_by(cntry) %>%
   summarise(m = mean(lon_n)) %>%
   arrange(desc(m)) %>%
   pull(cntry)
 
-# 3. Calculate Proportions
+# Calculate proportions
 plot_ready_lon <- audit_data_lon %>%
   group_by(cntry, lon_orig) %>%
   summarise(n = n(), .groups = "drop_last") %>%
@@ -123,34 +158,23 @@ plot_ready_lon <- audit_data_lon %>%
   ungroup() %>%
   mutate(cntry = factor(cntry, levels = cntry_order_audit))
 
-# 4. Create the Stacked Bar Plot (Inspired by EES Audit Code)
+# The plot
 lon_composition_plot <- ggplot(plot_ready_lon, aes(x = cntry, y = prop, fill = lon_orig)) +
   geom_bar(stat = "identity", position = "stack", width = 0.75, color = "white", linewidth = 0.1) +
   scale_y_continuous(labels = scales::percent, expand = c(0, 0)) +
-  # Using viridis 'plasma' as requested for clear category separation
   scale_fill_viridis_d(option = "plasma", end = 0.8, direction = -1) +
   labs(
-    title = "Loneliness Composition by Country",
-    subtitle = "Proportion of population in each frequency category. Ordered by decreasing mean loneliness.",
     x = "Country",
     y = "Proportion of Sample",
     fill = "Frequency of Loneliness"
   ) +
-  theme_bw() + 
   theme(
-    legend.position = "bottom",
-    legend.text = element_text(size = 9),
-    legend.title = element_text(size = 10, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
-    axis.text.y = element_text(size = 10),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank()
+    legend.text = element_text(size = 9) 
   ) +
   guides(fill = guide_legend(nrow = 2, byrow = TRUE))
 
-# 5. Save as Landscape (Better for 30-country x-axis)
-ggsave(here("Output", "Measures", "loneliness_proportions_by_country.png"), 
+#  Save 
+ggsave(here("Output", "Supplement", "loneliness_proportions_by_country.png"), 
        plot = lon_composition_plot, 
        width = 12, 
        height = 7, 
@@ -165,23 +189,19 @@ ggsave(here("Output", "Measures", "loneliness_proportions_by_country.png"),
 #### country-level corrs for dummy vars (SI)
 
 ```{r}
-# Select SI dummies
-# 1. Define final SI variables (no marit_iso)
+# Define SI variables 
 si_vars <- c("hhsize_iso", "meet_iso", "relig_iso", 
              "volunt_iso", "discuss_iso", "unemp_iso")
 
-# 2. Prepare the Correlation Data (Lower Triangle Only)
+# Correlations
 cor_long_full <- lon_turn_df %>%
   group_by(cntry) %>%
   nest() %>%
   mutate(cor_data = map(data, function(df_sub) {
-    # Calculate tetrachoric matrix with smoothing for zero cells
+    # tetrachoric 
     r_mat <- suppressMessages(tetrachoric(df_sub[, si_vars], correct = 0.5)$rho)
-    
-    # Keep only lower triangle
     r_mat[upper.tri(r_mat, diag = TRUE)] <- NA
-    
-    # Convert to long format
+    # Convert to long 
     as.data.frame(as.table(r_mat)) %>%
       rename(Var1 = Var1, Var2 = Var2, Cor = Freq) %>%
       filter(!is.na(Cor))
@@ -189,99 +209,87 @@ cor_long_full <- lon_turn_df %>%
   select(cntry, cor_data) %>%
   unnest(cor_data)
 
-# 3. Split Countries into Two Batches
+# Split Countries into batches
 unique_countries <- unique(cor_long_full$cntry)
 batch1 <- unique_countries[1:15]
 batch2 <- unique_countries[16:length(unique_countries)]
 
-# 4. Plot Function with geom_text for cell labels
+# Plot function 
 plot_si_cors_labeled <- function(data_subset, batch_name) {
   ggplot(data_subset, aes(Var1, Var2, fill = Cor)) +
     geom_tile(color = "white") +
-    # Add correlation labels rounded to 2 digits
-    geom_text(aes(label = round(Cor, 2)), size = 2.5, color = "black") +
-    scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+    geom_text(aes(label = round(Cor, 2)), size = 4, color = "black") +
+    scale_fill_gradient2(low = magma_pal[5], high = magma_pal[1], mid = "white", 
                          midpoint = 0, limit = c(-1, 1), 
                          name = "Correlation") +
     facet_wrap(~cntry, ncol = 3) +
+    
+    scale_x_discrete(labels = si_clean_labels) +
+    scale_y_discrete(labels = si_clean_labels) +
+    
     theme(
-      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 8),
-      axis.text.y = element_text(size = 8),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid = element_blank(),
-      legend.position = "right"
+      axis.text.y = element_text(face = "bold"), 
+      panel.grid = element_blank(), 
+      legend.position = "right"     
     ) +
-    labs(title = paste("Social Isolation Correlation Structure -", batch_name),
-         subtitle = "Tetrachoric Correlations (Lower Triangle). Values show degree of association between isolated poles.",
-         x = NULL, y = NULL)
+    labs(x = NULL, y = NULL)
 }
 
-# 5. Generate and Save
+# Generate and save
 p_batch1_lab <- plot_si_cors_labeled(filter(cor_long_full, cntry %in% batch1), "Batch 1")
 p_batch2_lab <- plot_si_cors_labeled(filter(cor_long_full, cntry %in% batch2), "Batch 2")
 
-# Save plots - ensuring directory exists
-ggsave(here("Output", "Measures", "SI_Correlations_Labels_B1.png"), p_batch1_lab, width = 12, height = 15)
-ggsave(here("Output", "Measures", "SI_Correlations_Labels_B2.png"), p_batch2_lab, width = 12, height = 15)
+ggsave(here("Output", "Supplement", "SI_Correlations_Labels_B1.png"), p_batch1_lab, width = 12, height = 16)
+ggsave(here("Output", "Supplement", "SI_Correlations_Labels_B2.png"), p_batch2_lab, width = 12, height = 16)
 ```
 
 #### Country-level levels of SI vars
 
 ```{r}
-# 1. Prepare the prevalence data
-# We calculate the % of '1' (Isolated) for each variable per country
+# Data
 si_dist_data <- lon_turn_df %>%
   select(cntry, hhsize_iso, meet_iso, relig_iso, 
          volunt_iso, discuss_iso, unemp_iso) %>%
   pivot_longer(cols = -cntry, names_to = "indicator", values_to = "is_isolated") %>%
   group_by(cntry, indicator) %>%
   summarise(
-    prevalence = mean(is_isolated, na.rm = TRUE) * 100, # Convert to percentage
+    prevalence = mean(is_isolated, na.rm = TRUE) * 100, 
     .groups = "drop"
   ) %>%
-  # Clean up labels for the plot
   mutate(indicator = str_remove(indicator, "_iso"))
 
-# 2. Split Countries into Two Batches for readability
+# Split into batches
 unique_countries <- unique(si_dist_data$cntry)
 batch1 <- unique_countries[1:15]
 batch2 <- unique_countries[16:length(unique_countries)]
 
-# 3. Plot Function
+# Plot function
 plot_si_distributions <- function(data_subset, batch_name) {
   ggplot(data_subset, aes(x = indicator, y = prevalence, fill = indicator)) +
     geom_bar(stat = "identity", show.legend = FALSE) +
-    geom_text(aes(label = round(prevalence, 1)), vjust = -0.5, size = 2.5) +
+    geom_text(aes(label = round(prevalence, 1)), vjust = -0.5, size = 3.5) +
     facet_wrap(~cntry, ncol = 3) +
+    
+    scale_x_discrete(labels = si_clean_labels) +
     scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 25)) +
-    scale_fill_brewer(palette = "Set3") +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid.major.x = element_blank()
-    ) +
-    labs(
-      title = paste("Prevalence of Social Isolation Markers -", batch_name),
-      subtitle = "Percentage (%) of respondents in the 'Isolated' pole for each indicator",
-      x = "Isolation Indicator",
-      y = "% Isolated"
-    )
+    
+    scale_fill_manual(values = magma_pal, labels = si_clean_labels) +
+    
+    labs(x = "SI marker", y = "% Isolated")
 }
-
-# 4. Generate and Save
+# Generate and save
 p_dist_b1 <- plot_si_distributions(filter(si_dist_data, cntry %in% batch1), "Batch 1")
 p_dist_b2 <- plot_si_distributions(filter(si_dist_data, cntry %in% batch2), "Batch 2")
 
-# Ensure directory exists
-ggsave(here("Output", "Measures", "SI_Distributions_B1.png"), p_dist_b1, width = 12, height = 15)
-ggsave(here("Output", "Measures", "SI_Distributions_B2.png"), p_dist_b2, width = 12, height = 15)
+ggsave(here("Output", "Supplement", "SI_Distributions_B1.png"), p_dist_b1, width = 12, height = 15)
+ggsave(here("Output", "Supplement", "SI_Distributions_B2.png"), p_dist_b2, width = 12, height = 15)
 ```
 
 
 #### VIF
 
 ```{r}
-# 2. Run the VIF loop by country
+# Run the VIF loop by country
 vif_by_country <- lon_turn_df %>%
   group_by(cntry) %>%
   group_split() %>%
@@ -289,7 +297,6 @@ vif_by_country <- lon_turn_df %>%
     current_country <- unique(df_country$cntry)
     
     # Check for zero variance in indicators within the country 
-    # (VIF can't be calculated if a variable is 100% 0 or 1 in that country)
     var_check <- df_country %>%
       summarise(across(all_of(si_vars), ~var(.x, na.rm = TRUE))) %>%
       pivot_longer(everything()) %>%
@@ -297,12 +304,12 @@ vif_by_country <- lon_turn_df %>%
     
     valid_vars <- var_check$name
     
-    # If we have at least 2 variables with variance, run the model
+    # If we have at least 2 ok variables, run the model
     if(length(valid_vars) >= 2) {
       form <- as.formula(paste("as.numeric(vote) ~", paste(valid_vars, collapse = " + ")))
       model <- lm(form, data = df_country)
       
-      # Extract VIF and convert to dataframe
+      # Extract VIF 
       vif_values <- vif(model)
       
       data.frame(
@@ -315,16 +322,17 @@ vif_by_country <- lon_turn_df %>%
     }
   })
 
-# 3. Pivot for a clean table format
+# Pivot 
 vif_table_final <- vif_by_country %>%
   pivot_wider(names_from = indicator, values_from = vif) %>%
   arrange(cntry)
 
 #visualize
-vif_table_final
+vif_table_final <- vif_table_final %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
 
-# 4. save 
-write_csv(vif_table_final, here("Output", "Measures", "SI_VIF_by_Country.csv"))
+# save 
+write_csv(vif_table_final, here("Output", "Supplement", "SI_VIF_by_Country.csv"))
 
 # Inspect the "worst" cases (highest VIFs)
 vif_by_country %>% arrange(desc(vif)) %>% head(10)
@@ -333,24 +341,24 @@ vif_by_country %>% arrange(desc(vif)) %>% head(10)
 #### Validation
 
 ```{r}
-# 1. Prepare Data: Update to si_index_raw
+# Data
 validity_long <- lon_turn_df %>%
   mutate(
     lon_n      = as.numeric(lon),
     gender_n   = as.numeric(gender),
     educ_num   = as.numeric(educ),
     inc_num    = 5 - as.numeric(hhincome),
-    # Use the raw additive index (0-7) for Spearman correlation
+    # Use the raw additive index (0-7)
     si_raw_n   = as.numeric(si_index_raw) 
   ) %>%
   select(cntry, si_raw_n, lon_n, gender_n, age, educ_num, inc_num) %>%
   group_by(cntry) %>%
   nest() %>%
   mutate(cor_data = map(data, function(df_sub) {
-    # Spearman is robust for the ordinal/count nature of these vars
+    # Spearman 
     r_mat <- cor(df_sub, method = "spearman", use = "pairwise.complete.obs")
     
-    # Filter for the SI Index row only
+    # Filter for the SI index row only
     as.data.frame(as.table(r_mat)) %>%
       filter(Var1 == "si_raw_n" & Var2 != "si_raw_n") %>%
       rename(Variable = Var2, Cor = Freq) %>%
@@ -360,41 +368,41 @@ validity_long <- lon_turn_df %>%
         Variable == "age"      ~ "Age",
         Variable == "educ_num" ~ "Education",
         Variable == "inc_num"  ~ "Income"
-      ))
+      )) %>%
+      mutate(Variable = factor(Variable, levels = c("Income", "Education", "Gender", "Age", "Loneliness")))
   })) %>%
   select(cntry, cor_data) %>%
   unnest(cor_data)
 
-# 2. Plotting Function (Same logic, cleaner theme)
+# Plotting function 
 plot_si_profile_updated <- function(data_subset, batch_name) {
   ggplot(data_subset, aes(x = Variable, y = Cor, fill = Cor)) +
     geom_bar(stat = "identity", color = "white") +
-    geom_text(aes(label = round(Cor, 2)), 
-              # Dynamic positioning based on bar direction
-              hjust = ifelse(data_subset$Cor >= 0, -0.2, 1.2), size = 2.5) +
-    scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+    geom_text(aes(label = round(Cor, 2), 
+                  hjust = ifelse(Cor >= 0, -0.2, 1.2)), size = 4) +
+    scale_fill_gradient2(low = magma_pal[5], high = magma_pal[1], mid = "white", 
                          midpoint = 0, limit = c(-1, 1), name = "Spearman r") +
     facet_wrap(~cntry, ncol = 3) +
     coord_flip() + 
     scale_y_continuous(limits = c(-0.6, 0.6)) +
     theme(
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid.minor = element_blank(),
-      axis.text.y = element_text(size = 8),
-      legend.position = "bottom"
+      axis.text.y = element_text(size = 12, face = "bold"),
+      axis.text.x = element_text(size = 11),
+      axis.title.x = element_text(size = 14, face = "bold"),
+      legend.title = element_text(size = 12, face = "bold"),
+      legend.text = element_text(size = 11),
+      strip.text = element_text(size = 11, face = "bold")
     ) +
-    labs(title = paste("SI Index Validity Profile -", batch_name),
-         subtitle = "Correlations based on the raw 0-7 SI Index",
-         x = NULL, y = "Spearman Correlation")
+    labs(x = NULL, y = "Spearman Correlation")
 }
 
-# 3. Save Batches
+# Do and save 
 unique_countries <- unique(validity_long$cntry)
 p_profile_b1 <- plot_si_profile_updated(filter(validity_long, cntry %in% unique_countries[1:15]), "Batch 1")
 p_profile_b2 <- plot_si_profile_updated(filter(validity_long, cntry %in% unique_countries[16:length(unique_countries)]), "Batch 2")
 
-ggsave(here("Output", "Measures", "SI_Validity_Profile_B1.png"), p_profile_b1, width = 12, height = 14)
-ggsave(here("Output", "Measures", "SI_Validity_Profile_B2.png"), p_profile_b2, width = 12, height = 14)
+ggsave(here("Output", "Supplement", "SI_Validity_Profile_B1.png"), p_profile_b1, width = 12, height = 14)
+ggsave(here("Output", "Supplement", "SI_Validity_Profile_B2.png"), p_profile_b2, width = 12, height = 14)
 ```
 
 ### Descriptives on the final index
@@ -402,13 +410,14 @@ ggsave(here("Output", "Measures", "SI_Validity_Profile_B2.png"), p_profile_b2, w
 #### SI country - Means
 
 ```{r}
-# Calculate Means and CIs for si_n (0-6 scale)
+# Means and CIs 
 si_means_ci <- lon_turn_df %>%
-  filter(!is.na(si_n)) %>%
+  # Using the raw 0-6 index
+  filter(!is.na(si_index_raw)) %>%
   group_by(cntry) %>%
   summarise(
-    mean_si = mean(si_n, na.rm = TRUE),
-    sd_si   = sd(si_n, na.rm = TRUE),
+    mean_si = mean(si_index_raw, na.rm = TRUE),
+    sd_si   = sd(si_index_raw, na.rm = TRUE),
     n       = n()
   ) %>%
   mutate(
@@ -416,64 +425,48 @@ si_means_ci <- lon_turn_df %>%
     lower = mean_si - 1.96 * se,
     upper = mean_si + 1.96 * se
   ) %>%
-  # Order countries by decreasing Social Isolation
+  # Order countries by highest mean isolation
   arrange(desc(mean_si)) %>%
   mutate(cntry = factor(cntry, levels = cntry))
 
-# Create Dot-Range Plot
+# Plot Means
 p_si_means <- ggplot(si_means_ci, aes(x = cntry, y = mean_si)) +
-  geom_pointrange(aes(ymin = lower, ymax = upper), color = "#7570b3", size = 0.6) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank()
-  ) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), color = magma_pal[2], size = 0.6) +
   labs(
-    title = "Average Social Isolation by Country",
-    subtitle = "Mean scores on the 0-6 index with 95% CIs. Ordered by decreasing isolation.",
     x = "Country",
     y = "Mean SI Index (0-6)",
-    caption = "Index counts markers like living alone, infrequent social meetings, etc. Higher = More Isolated."
+    caption = "Counts of SI markers"
   )
 
-# --- 2. Plot B: Stacked Proportions (Composition Audit) ---
-
-# Define the levels for SI
-si_levels_order <- c("0-1: Low ISO", "2: Mid ISO", "3+: High ISO")
-
+# Stacked prop
 plot_ready_si <- lon_turn_df %>%
-  filter(!is.na(si_levels)) %>%
-  mutate(si_levels = factor(si_levels, levels = si_levels_order)) %>%
-  group_by(cntry, si_levels) %>%
+  filter(!is.na(si_index_raw)) %>%
+  mutate(si_index_raw = factor(si_index_raw, levels = 0:6)) %>%
+  group_by(cntry, si_index_raw) %>%
   summarise(n = n(), .groups = "drop_last") %>%
   mutate(prop = n / sum(n)) %>%
   ungroup() %>%
-  # Reuse the country order from the means plot for alignment
   mutate(cntry = factor(cntry, levels = levels(si_means_ci$cntry)))
 
-# Create the Stacked Bar Plot
-p_si_proportions <- ggplot(plot_ready_si, aes(x = cntry, y = prop, fill = si_levels)) +
+# Plot Proportions
+p_si_proportions <- ggplot(plot_ready_si, aes(x = cntry, y = prop, fill = si_index_raw)) +
   geom_bar(stat = "identity", position = "stack", width = 0.75, color = "white", linewidth = 0.1) +
   scale_y_continuous(labels = scales::percent, expand = c(0, 0)) +
-  # Viridis 'plasma' for consistency with the loneliness audit
-  scale_fill_viridis_d(option = "plasma", end = 0.8) +
+  
+  scale_fill_viridis_d(option = "magma", end = 0.9) +
+  
   labs(
-    title = "Social Isolation Composition by Country",
-    subtitle = "Proportion of population by isolation intensity. Ordered by decreasing mean isolation.",
     x = "Country",
     y = "Proportion of Sample",
-    fill = "Isolation Level"
+    fill = "Raw SI Score (0-6)"
   ) +
-  theme(
-    legend.position = "bottom",
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank()
-  )
+  # Force the legend into a single row so it doesn't eat up plot space
+  theme(legend.position = "bottom", legend.direction = "horizontal") +
+  guides(fill = guide_legend(nrow = 2))
 
-# --- 3. Save Both ---
-ggsave(here("Output", "Measures", "SI_Means_CI.png"), p_si_means, width = 11, height = 6, dpi = 600)
-ggsave(here("Output", "Measures", "SI_Proportions_Stacked.png"), p_si_proportions, width = 12, height = 7, dpi = 600)
+# Save
+ggsave(here("Output", "Supplement", "SI_Means_CI_Raw.png"), p_si_means, width = 11, height = 6, dpi = 600)
+ggsave(here("Output", "Supplement", "SI_Proportions_Stacked_Raw.png"), p_si_proportions, width = 12, height = 7, dpi = 600)
 ```
 
 
@@ -482,63 +475,54 @@ ggsave(here("Output", "Measures", "SI_Proportions_Stacked.png"), p_si_proportion
 ### Typology plot
 
 ```{r}
-# 1. Prepare frequency and percentage data
+# Data
 sil_dist <- lon_turn_df %>%
   filter(!is.na(sil_type)) %>%
   group_by(cntry, sil_type) %>%
   summarise(n = n(), .groups = "drop_last") %>%
   mutate(pct = (n / sum(n)) * 100) %>%
   ungroup() %>%
-  mutate(
-    Lon_Pos = if_else(str_detect(sil_type, "High L"), "High Loneliness", "Low Loneliness"),
-    SI_Pos  = if_else(str_detect(sil_type, "High SI"), "High SI", "Low SI"),
-    Lon_Pos = factor(Lon_Pos, levels = c("Low Loneliness", "High Loneliness")),
-    SI_Pos  = factor(SI_Pos, levels = c("Low SI", "High SI"))
+    mutate(
+      Lon_Pos = if_else(str_detect(sil_type, "High L"), "High\nLoneliness", "Low\nLoneliness"),
+      SI_Pos  = if_else(str_detect(sil_type, "High SI"), "High SI", "Low SI"),
+      Lon_Pos = factor(Lon_Pos, levels = c("Low\nLoneliness", "High\nLoneliness")),
+      SI_Pos  = factor(SI_Pos, levels = c("Low SI", "High SI"))
   )
 
-# 2. Split Countries into Two Batches
+# Batches
 unique_countries <- unique(sil_dist$cntry)
 batch1 <- unique_countries[1:15]
 batch2 <- unique_countries[16:length(unique_countries)]
 
-# 3. Plotting Function for the 2x2 Heatmap (Single Color Shade)
+# Plotting function 
 plot_sil_heatmap_single <- function(data_subset, batch_name) {
   ggplot(data_subset, aes(x = Lon_Pos, y = SI_Pos, fill = pct)) +
-    geom_tile(color = "white", size = 0.5) +
-    # Cell labels
+    geom_tile(color = "white", linewidth = 0.5) + 
     geom_text(aes(label = paste0(round(pct, 1), "%")), 
               color = "black", fontface = "bold", size = 5) +
-    # SINGLE COLOR SCALE: Shades of Blue
-    # Using light blue for low % and deep navy for high %
-    scale_fill_gradient(low = "#f7fbff", high = "blue", name = "% of Pop") +
+    scale_fill_gradient(low = "#f7fbff", high = magma_pal[3], name = "Percentage of respondents") +
     facet_wrap(~cntry, ncol = 3) +
     theme(
-      axis.title = element_blank(),
-      axis.text = element_text(size = 7),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid = element_blank(),
-      legend.position = "bottom"
-    ) +
-    labs(
-      title = paste("Distribution of SIL Typology -", batch_name),
-      subtitle = "2x2 Landscape of Isolation & Loneliness (Relative thresholds per country)",
-      caption = "Bottom-Left: Integrated | Top-Right: Double Burden (High L + High SI)"
+      axis.title = element_blank(),          
+      
+      axis.text = element_text(size = 15, face = "bold"),    
+      
+      panel.grid = element_blank()           
     )
 }
 
-# 4. Generate and Save
+# Generate and save
 p_heat_b1_v2 <- plot_sil_heatmap_single(filter(sil_dist, cntry %in% batch1), "Batch 1")
 p_heat_b2_v2 <- plot_sil_heatmap_single(filter(sil_dist, cntry %in% batch2), "Batch 2")
 
-ggsave(here("Output", "Measures", "SIL_Heatmap_SingleColor_B1.png"), p_heat_b1_v2, width = 12, height = 15)
-ggsave(here("Output", "Measures", "SIL_Heatmap_SingleColor_B2.png"), p_heat_b2_v2, width = 12, height = 15)
+ggsave(here("Output", "Supplement", "SIL_Heatmap_SingleColor_B1.png"), p_heat_b1_v2, width = 12, height = 16)
+ggsave(here("Output", "Supplement", "SIL_Heatmap_SingleColor_B2.png"), p_heat_b2_v2, width = 12, height = 16)
 ```
+
 ### Audit plot
 
 ```{r}
-# 1. Prepare Data
-# Ensure sil_type is clean and ordered correctly for a logical stack
-# Stack order: Integrated (bottom) -> High SI -> High L -> Double Burden (top)
+# Data
 sil_levels_ordered <- c("Low L, Low SI", "Low L, High SI", 
                         "High L, Low SI", "High L, High SI")
 
@@ -546,20 +530,18 @@ audit_data_sil <- lon_turn_df %>%
   filter(!is.na(sil_type)) %>%
   mutate(
     sil_type = factor(sil_type, levels = sil_levels_ordered),
-    # Numeric version to help with country ordering (High L + High SI weights)
+    # Numeric version to help with country ordering 
     sil_n = as.numeric(sil_type)
   )
 
-# 2. Calculate Country Order
-# We'll order by the proportion of the 'Double Burden' group (High L, High SI)
-# This makes it easy to see where the problem is most acute
+# Calculate order
 cntry_order_sil <- audit_data_sil %>%
   group_by(cntry) %>%
   summarise(double_burden_prop = mean(sil_type == "High L, High SI")) %>%
   arrange(desc(double_burden_prop)) %>%
   pull(cntry)
 
-# 3. Calculate Proportions
+# Calculate prop
 plot_ready_sil <- audit_data_sil %>%
   group_by(cntry, sil_type) %>%
   summarise(n = n(), .groups = "drop_last") %>%
@@ -567,35 +549,24 @@ plot_ready_sil <- audit_data_sil %>%
   ungroup() %>%
   mutate(cntry = factor(cntry, levels = cntry_order_sil))
 
-# 4. Create the Stacked Bar Plot
+# the Plot
 sil_composition_plot <- ggplot(plot_ready_sil, aes(x = cntry, y = prop, fill = sil_type)) +
   geom_bar(stat = "identity", position = "stack", width = 0.75, color = "white", linewidth = 0.1) +
   scale_y_continuous(labels = scales::percent, expand = c(0, 0)) +
-  # Using viridis 'plasma' to highlight the 'High' groups with brighter colors
   scale_fill_viridis_d(option = "plasma", end = 0.9, direction = 1) +
   labs(
-    title = "SIL Typology Composition by Country",
-    subtitle = "Proportion of population by Loneliness (L) and Social Isolation (SI) groups. Ordered by 'Double Burden' share.",
     x = "Country",
     y = "Proportion of Sample",
     fill = "Typology Group",
-    caption = "Source: ESS Round 11. Groups defined by country-specific median thresholds."
+    caption = "Groups defined by country-specific median thresholds"
   ) +
-  theme_bw() + 
   theme(
-    legend.position = "bottom",
-    legend.text = element_text(size = 9),
-    legend.title = element_text(size = 10, face = "bold"),
-    axis.title = element_text(size = 12, face = "bold"),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
-    axis.text.y = element_text(size = 10),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank()
+    legend.text = element_text(size = 9) 
   ) +
   guides(fill = guide_legend(nrow = 2, byrow = TRUE))
 
-# 5. Save as Landscape
-ggsave(here("Output", "Measures", "sil_typology_proportions_by_country.png"), 
+# Save  
+ggsave(here("Output", "Supplement", "sil_typology_proportions_by_country.png"), 
        plot = sil_composition_plot, 
        width = 12, 
        height = 7, 
@@ -603,286 +574,122 @@ ggsave(here("Output", "Measures", "sil_typology_proportions_by_country.png"),
 ```
 
 
-## SI with turnout
-
-```{r}
-# 1. Calculate Predicted Probabilities and 95% CIs by Country
-# We use si_levels (the 0-1, 2, 3+ factor)
-si_levels_turnout_ci <- lon_turn_df %>%
-  filter(!is.na(si_levels) & !is.na(vote)) %>%
-  group_by(cntry) %>%
-  nest() %>%
-  mutate(preds = map(data, function(df_sub) {
-    # Fit logistic model with the new 3-level factor
-    m_desc <- glm(vote ~ si_levels, data = df_sub, family = binomial)
-    
-    # Create prediction data for the 3 levels
-    pred_df <- data.frame(si_levels = levels(df_sub$si_levels))
-    
-    # Get predictions on the logit scale
-    preds_link <- predict(m_desc, newdata = pred_df, type = "link", se.fit = TRUE)
-    
-    # Back-transform to probability scale
-    pred_df %>%
-      mutate(
-        prob = plogis(preds_link$fit),
-        lower = plogis(preds_link$fit - 1.96 * preds_link$se.fit),
-        upper = plogis(preds_link$fit + 1.96 * preds_link$se.fit)
-      )
-  })) %>%
-  select(cntry, preds) %>%
-  unnest(preds)
-
-# 2. Split Countries into Two Batches
-unique_countries <- unique(si_levels_turnout_ci$cntry)
-batch1 <- unique_countries[1:15]
-batch2 <- unique_countries[16:length(unique_countries)]
-
-# 3. Plotting Function: Using the new factor levels
-plot_si_levels_turnout <- function(data_subset, batch_name) {
-  ggplot(data_subset, aes(x = si_levels, y = prob, color = si_levels)) +
-    geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.7, fatten = 2) +
-    facet_wrap(~cntry, ncol = 3) +
-    # Consistent 50-100% trim for European turnout
-    scale_y_continuous(labels = scales::percent_format(), limits = c(0.4, 1.0)) +
-    # Dark2 palette provides good contrast for the 3 distinct groups
-    scale_color_brewer(palette = "Dark2") +
-    theme(
-      axis.text.x = element_blank(), # Labels are in the legend
-      axis.ticks.x = element_blank(),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid.minor = element_blank(),
-      legend.position = "bottom"
-    ) +
-    labs(
-      title = paste("Turnout by Social Isolation Intensity -", batch_name),
-      subtitle = "Predicted Probability of Voting (Y-axis trimmed to 50-100%)",
-      x = "SI Level (Low → Mid → High)",
-      y = "Prob. of Voting",
-      color = "SI Intensity"
-    )
-}
-
-# 4. Generate and Save
-p_si_levels_b1 <- plot_si_levels_turnout(filter(si_levels_turnout_ci, cntry %in% batch1), "Batch 1")
-p_si_levels_b2 <- plot_si_levels_turnout(filter(si_levels_turnout_ci, cntry %in% batch2), "Batch 2")
-
-ggsave(here("Output", "Measures", "SI_Levels_Turnout_B1.png"), p_si_levels_b1, width = 12, height = 15)
-ggsave(here("Output", "Measures", "SI_Levels_Turnout_B2.png"), p_si_levels_b2, width = 12, height = 15)
-```
-
-
-## lon with turnout
-
-```{r}
-# 1. Define the updated levels from File 1
-lon_3_ordered <- c("None/Almost none", "Some of the time", "Most/All the time")
-
-# 2. Calculate Predicted Probabilities and 95% CIs
-# Using lon_3levels created in File 1
-lon_3level_turnout_ci <- lon_turn_df %>%
-  filter(!is.na(lon) & !is.na(vote)) %>%
-  group_by(cntry) %>%
-  nest() %>%
-  mutate(preds = map(data, function(df_sub) {
-    # Fit logistic model with the 3-level factor
-    m_desc <- glm(vote ~ lon, data = df_sub, family = binomial)
-    
-    # Prediction data for the 3 levels
-    pred_df <- data.frame(
-      lon = factor(lon_3_ordered, levels = lon_3_ordered)
-    )
-    
-    # Get predictions
-    preds_link <- predict(m_desc, newdata = pred_df, type = "link", se.fit = TRUE)
-    
-    pred_df %>%
-      mutate(
-        prob = plogis(preds_link$fit),
-        lower = plogis(preds_link$fit - 1.96 * preds_link$se.fit),
-        upper = plogis(preds_link$fit + 1.96 * preds_link$se.fit)
-      )
-  })) %>%
-  select(cntry, preds) %>%
-  unnest(preds)
-
-# 3. Simplified Plotting Function
-plot_lon_3level_ordered <- function(data_subset, batch_name) {
-  ggplot(data_subset, aes(x = lon, y = prob, color = lon)) +
-    geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.7, fatten = 2.5) +
-    facet_wrap(~cntry, ncol = 3) +
-    # Using your 30%-100% trim to show the full range of the 'drop'
-    scale_y_continuous(labels = scales::percent_format(), limits = c(0.3, 1.0)) +
-    theme(
-      axis.text.x = element_blank(), 
-      axis.ticks.x = element_blank(),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid.minor = element_blank(),
-      legend.position = "bottom",
-      legend.text = element_text(size = 8)
-    ) +
-    labs(
-      title = paste("Turnout by Loneliness Intensity -", batch_name),
-      subtitle = "Ordered dosage effect: None → Some → Most/All",
-      x = NULL, y = "Prob. of Voting",
-      color = "Loneliness Level"
-    )
-}
-
-# 4. Generate and Save
-unique_countries <- unique(lon_3level_turnout_ci$cntry)
-p_lon_final_b1 <- plot_lon_3level_ordered(filter(lon_3level_turnout_ci, cntry %in% unique_countries[1:15]), "Batch 1")
-p_lon_final_b2 <- plot_lon_3level_ordered(filter(lon_3level_turnout_ci, cntry %in% unique_countries[16:length(unique_countries)]), "Batch 2")
-
-ggsave(here("Output", "Measures", "Lon_Turnout1.png"), p_lon_final_b1, width = 12, height = 15)
-ggsave(here("Output", "Measures", "Lon_Turnout2.png"), p_lon_final_b2, width = 12, height = 15)
-```
-
-
-## SI-L with turnout
-
-```{r}
-# 1. Calculate Predicted Probabilities and 95% CIs by Country
-# We use a logistic regression for each country to get the standard errors
-sil_turnout_ci <- lon_turn_df %>%
-  filter(!is.na(sil_type) & !is.na(vote)) %>%
-  group_by(cntry) %>%
-  nest() %>%
-  mutate(preds = map(data, function(df_sub) {
-    # Fit simple logistic model
-    m_desc <- glm(vote ~ sil_type, data = df_sub, family = binomial)
-    
-    # Create prediction data for the 4 levels
-    pred_df <- data.frame(sil_type = levels(df_sub$sil_type))
-    
-    # Get predictions on the link scale (logit) to calculate CIs
-    preds_link <- predict(m_desc, newdata = pred_df, type = "link", se.fit = TRUE)
-    
-    # Back-transform to probability scale with 95% CI
-    pred_df %>%
-      mutate(
-        prob = plogis(preds_link$fit),
-        lower = plogis(preds_link$fit - 1.96 * preds_link$se.fit),
-        upper = plogis(preds_link$fit + 1.96 * preds_link$se.fit)
-      )
-  })) %>%
-  select(cntry, preds) %>%
-  unnest(preds)
-
-# 2. Define Batches for the 30 countries
-unique_countries <- unique(sil_turnout_ci$cntry)
-batch1 <- unique_countries[1:15]
-batch2 <- unique_countries[16:length(unique_countries)]
-
-# 3. Plotting Function: Dot Plot with geom_pointrange
-plot_sil_turnout_ci <- function(data_subset, batch_name) {
-  ggplot(data_subset, aes(x = sil_type, y = prob, color = sil_type)) +
-    # Use geom_pointrange to show the mean and the CI bar
-    geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.5) +
-    facet_wrap(~cntry, ncol = 3) +
-    # Trim Y axis as requested (50% to 100%)
-    scale_y_continuous(labels = scales::percent_format(), limits = c(0.3, 1)) +
-    scale_color_brewer(palette = "Dark2", direction = -1) +
-    theme(
-      axis.text.x = element_blank(), # Profile names are in the legend
-      axis.ticks.x = element_blank(),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      panel.grid.minor = element_blank(),
-      legend.position = "bottom"
-    ) +
-    labs(
-      title = paste("Turnout by SIL Typology (with 95% CI) -", batch_name),
-      subtitle = "Predicted Probability of Voting (Y-axis trimmed to 50-100%)",
-      x = "Profile (Integrated → Double Burden)",
-      y = "Prob. of Voting",
-      color = "Profile"
-    )
-}
-
-# 4. Generate and Save
-p_turn_ci_b1 <- plot_sil_turnout_ci(filter(sil_turnout_ci, cntry %in% batch1), "Batch 1")
-p_turn_ci_b2 <- plot_sil_turnout_ci(filter(sil_turnout_ci, cntry %in% batch2), "Batch 2")
-
-# Ensure directory exists
-dir.create(here("Output", "Measures"), recursive = TRUE, showWarnings = FALSE)
-
-ggsave(here("Output", "Measures", "SIL_Turnout_CI_B1.png"), p_turn_ci_b1, width = 12, height = 15)
-ggsave(here("Output", "Measures", "SIL_Turnout_CI_B2.png"), p_turn_ci_b2, width = 12, height = 15)
-```
-
 ## Vote, vote_strict, official
 
 ```{r}
-# --- 1. Import and Clean IDEA Data ---
-# We ensure strictly one official measure per ISO2 code
-idea_clean <- read_excel(here("Input", "idea.xlsx")) %>%
-  select(ISO2, year, Voter_Turnout = `Voter Turnout`) %>%
-  # Convert '45.23%' to 0.4523
-  mutate(
-    official = as.numeric(gsub("%", "", Voter_Turnout)) / 100,
-    election_year = as.numeric(substr(year, 1, 4))
-  ) %>%
-  # PROBLEM FIX: Keep only the most recent election year per country
-  group_by(ISO2) %>%
-  slice_max(election_year, n = 1, with_ties = FALSE) %>%
-  ungroup() %>%
-  select(ISO2, official)
-
-# --- 2. Aggregate Survey Data (ESS) ---
+# Aggregate data on turnout (ESS and IDEA)
 survey_agg <- lon_turn_df %>%
   group_by(cntry) %>%
   summarise(
-    vote        = mean(vote, na.rm = TRUE),
+    official = mean(official_turnout_lag, na.rm = TRUE),
+    vote = mean(vote, na.rm = TRUE),
     vote_strict = mean(vote_strict, na.rm = TRUE),
     .groups = "drop"
   )
 
-# --- 3. Join and Prepare for Plotting ---
-validation_long <- survey_agg %>%
-  inner_join(idea_clean, by = c("cntry" = "ISO2")) %>%
-  pivot_longer(
-    cols = c(official, vote, vote_strict),
-    names_to = "measure",
-    values_to = "value"
+# Data prep: calculate bias from benchmark 
+deviation_data <- survey_agg %>%
+  mutate(
+    bias_vote = vote - official,
+    bias_vote_strict = vote_strict - official
   ) %>%
-  # PROBLEM FIX: Set the specific order for the bars
-  mutate(measure = factor(measure, levels = c("official", "vote", "vote_strict")))
+  # Order countries by their standard over-reporting 
+  arrange(bias_vote) %>%
+  mutate(cntry = factor(cntry, levels = cntry)) %>%
+  pivot_longer(
+    cols = c(bias_vote, bias_vote_strict),
+    names_to = "measure",
+    values_to = "deviation"
+  ) %>%
+  mutate(
+    measure = case_when(
+      measure == "bias_vote" ~ "Self-reported\nvote choice",
+      measure == "bias_vote_strict" ~ "Successful\nvote recall"
+    ),
+    # factor levels
+    measure = factor(measure, levels = c("Self-reported\nvote choice", "Successful\nvote recall"))
+  )
 
-# --- 4. Generate Faceted Bar Chart ---
-# We split into two batches for readability (15 countries each)
-unique_cntries <- unique(validation_long$cntry)
-batch1 <- unique_cntries[1:15]
-batch2 <- unique_cntries[16:length(unique_cntries)]
+# Plot the deviation from zero
+p_deviation <- ggplot(deviation_data, aes(x = deviation, y = cntry, color = measure)) +
+  geom_vline(xintercept = 0, color = "#0D0887FF", linewidth = 1.2) +
+  
+  geom_line(aes(group = cntry), color = "grey", linewidth = 0.8, alpha = 0.5) +
+  geom_point(size = 3.5) +
+  
+  scale_x_continuous(
+    labels = scales::percent_format(), 
+    breaks = scales::pretty_breaks(n = 8) 
+  ) +
 
-plot_validation_bars <- function(data_subset, batch_label) {
-  ggplot(data_subset, aes(x = measure, y = value, fill = measure)) +
-    geom_col(color = "white", width = 0.7) +
-    # Add percentage labels on top of bars
-    geom_text(aes(label = paste0(round(value * 100, 0), "%")), 
-              vjust = -0.5, size = 2.5) +
-    facet_wrap(~ cntry, ncol = 3) +
-    scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1.1)) +
-    # Consistent color scheme
-    scale_fill_manual(values = c("official" = "#333333", "vote" = "#F8766D", "vote_strict" = "#00BFC4")) +
-    theme(
-      axis.text.x = element_blank(), # Legend handles the labels
-      axis.title.x = element_blank(),
-      strip.background = element_rect(fill = "grey95", color = NA),
-      legend.position = "bottom"
-    ) +
-    labs(
-      title = paste("Turnout Validation:", batch_label),
-      subtitle = "Comparing Official Turnout vs. Self-Reported vs. Strict Vote Recall",
-      y = "Turnout Rate (%)",
-      fill = "Measure"
-    )
-}
+  scale_color_manual(values = c(
+    "Self-reported\nvote choice" = "#6A00A8FF", 
+    "Successful\nvote recall" = "#FCA636FF"   
+  )) +
+  labs(
+    x = "Deviation from Official Benchmark",
+    y = "Country",
+    color = "Measure"
+  ) +
+  theme(
+    
+    panel.grid.major.y = element_line(color = "grey90", linetype = "dashed"),
+    panel.grid.major.x = element_line(color = "grey90", linetype = "dashed"),
+    
+    
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    
+    
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 11),
+    
+    legend.key.height = unit(2, "lines") 
+  )
 
-# 5. Save Batches
-p_v_b1 <- plot_validation_bars(filter(validation_long, cntry %in% batch1), "Batch 1")
-p_v_b2 <- plot_validation_bars(filter(validation_long, cntry %in% batch2), "Batch 2")
+# Save
+ggsave(here("Output", "Supplement", "Turnout_Deviation_Magma.png"), p_deviation, width = 12, height = 16, dpi = 600)
+```
 
-ggsave(here("Output", "Measures", "Turnout_Validation_Bars_B1.png"), p_v_b1, width = 12, height = 15)
-ggsave(here("Output", "Measures", "Turnout_Validation_Bars_B2.png"), p_v_b2, width = 12, height = 15)
+```{r}
+# Formal valiadtion
+
+print("--- Preparing Error Data ---")
+validation_stats <- survey_agg %>%
+  mutate(
+    # absolute error (distance from Official) for both measures
+    error_vote = abs(vote - official),
+    error_vote_strict = abs(vote_strict - official)
+  )
+
+# Mean Absolute Error 
+print("--- 1. Mean Absolute Error (MAE) ---")
+mae_summary <- validation_stats %>%
+  summarise(
+    MAE_self_report = mean(error_vote, na.rm = TRUE),
+    MAE_strict_recall = mean(error_vote_strict, na.rm = TRUE),
+    Improvement = MAE_self_report - MAE_strict_recall
+  )
+print(mae_summary)
+
+# Paired T-Test 
+print("--- 2. Paired T-Test on Errors ---")
+error_ttest <- t.test(
+  validation_stats$error_vote, 
+  validation_stats$error_vote_strict, 
+  paired = TRUE, 
+  alternative = "greater" 
+)
+print(error_ttest)
+
+# Correlation with Official 
+print("--- 3. Correlations with Official Turnout ---")
+cor_vote <- cor.test(validation_stats$official, validation_stats$vote)
+cor_strict <- cor.test(validation_stats$official, validation_stats$vote_strict)
+
+cat("Correlation (Official vs. Self-Report):", round(cor_vote$estimate, 3), 
+    "| p-value:", format.pval(cor_vote$p.value), "\n")
+cat("Correlation (Official vs. Strict Recall):", round(cor_strict$estimate, 3), 
+    "| p-value:", format.pval(cor_strict$p.value), "\n")
 ```
 

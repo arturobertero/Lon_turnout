@@ -1,0 +1,561 @@
+---
+title: "3_Models"
+author: "Arturo Bertero"
+date: "2026-02-09"
+output: html_document
+---
+
+```{r}
+#clean
+rm(list = ls())
+
+library("pacman")
+p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, broom,
+       marginaleffects, ggeffects, srvyr, patchwork, ggeffects, ragg)
+
+```
+
+
+# Input
+
+```{r}
+# Load
+lon_turn_df = readRDS(here("Input", "data_clean.rds"))
+```
+
+# Processing
+
+```{r}
+# weights
+ess_design <- svydesign(
+ ids = ~psu, 
+ strata = ~stratum, 
+ weights = ~anweight, 
+ data = lon_turn_df, 
+ nest = TRUE
+)
+
+#as_survey_design
+ess_survey <- lon_turn_df %>%
+  as_survey_design(
+    ids = psu, 
+    strata = stratum, 
+    weights = anweight, 
+    nest = TRUE
+  )
+```
+
+```{r}
+# Global options for plots
+
+# Custom theme
+theme_paper <- function() {
+  theme_bw(base_size = 12) +
+    theme(
+      text = element_text(family = "serif", color = "black"), 
+      plot.title = element_text(face = "bold", size = 14, margin = margin(b = 10)),
+      plot.subtitle = element_text(size = 11, color = "grey40", margin = margin(b = 10)),
+      axis.title = element_text(face = "bold", size = 12),
+      axis.text = element_text(size = 10, color = "black"),
+      axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+      strip.background = element_blank(), 
+      strip.text = element_text(face = "bold", size = 11),
+      panel.border = element_rect(color = "black", linewidth = 0.8), 
+      panel.grid.minor = element_blank(), 
+      panel.grid.major.x = element_blank(),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank()
+    )
+}
+
+# Lock it in 
+theme_set(theme_paper())
+
+#Global palette
+magma_pal <- c("#0D0887FF", "#6A00A8FF", "#B12A90FF", "#E16462FF", "#FCA636FF", "#F0F921FF")
+```
+
+## Multilevel model
+
+```{r}
+# data prep
+mlm_df <- lon_turn_df %>%
+  # LISTWISE
+  drop_na(
+    vote_strict, vote,                 
+    lon_n, si_n,                       
+    lon, si_levels, sil_type,          
+    polint_n, partisanship,            
+    official_turnout_lag,              
+    gender, age, educ, hhincome        
+  ) %>%
+  
+  # GROUP-MEAN CENTERING
+  group_by(cntry) %>%
+  mutate(
+    age_centered = age - mean(age),
+    polint_centered = polint_n - mean(polint_n), 
+    lon_centered = lon_n - mean(lon_n),
+    si_centered = si_n - mean(si_n)
+  ) %>%
+  ungroup() %>%
+  
+  #TRANSFORMATIONS
+  mutate(
+    # Rescale age for the optimizer
+    age_decades_centered = age_centered / 10,
+    
+    # Rescale weights so the mean is exactly 1 for the final sample
+    weights_scaled = anweight / mean(anweight),
+    
+    # Build the exhaustive typology variable for MM4_robust
+    sil_exhaustive = interaction(lon, si_levels, sep = " & "),
+    sil_exhaustive = relevel(sil_exhaustive, ref = "None/Almost none & 0-1: Low ISO")
+  )
+
+# Final n by country
+n_by_cntry <- mlm_df %>%
+  count(cntry, name = "Final_N") %>%
+  arrange(cntry)
+
+# Save locally to your Output/Tables folder
+write_csv(n_by_cntry, here("Output", "Supplement", "Final_Sample_Size_By_Country.csv"))
+```
+
+### Main models
+
+#### Justification for random slopes
+
+```{r}
+# test 1
+test0_intercept <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered + gender + age_decades_centered + educ + hhincome + (1 | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa")
+))
+
+# test 2
+test1_lon_slope <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+))
+
+# test 3
+test2_both_slopes <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered + gender + age_decades_centered + educ + hhincome + (1 + lon_centered + si_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# anova
+anova(test0_intercept, test1_lon_slope, test2_both_slopes)
+```
+
+#### MM1-MM3
+
+```{r}
+# MM1 to MM3
+mm1 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + official_turnout_lag + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# MM2 
+mm2 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered + official_turnout_lag + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# MM3 
+mm3 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered + polint_centered + partisanship + official_turnout_lag + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+```
+
+### Robustness / alternative specifications
+
+#### MM3_1 - MM3_4
+
+```{r}
+mm3_1 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered * si_centered + polint_centered + partisanship + official_turnout_lag + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# MM3_2 (Fixed random slope)
+mm3_2 <- suppressWarnings(glmer(
+  vote ~ lon_centered + si_centered + polint_centered + partisanship + official_turnout_lag + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# MM3_3 (Fixed random slope)
+mm3_3 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered * official_turnout_lag + si_centered + polint_centered + partisanship + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+# MM3_4 (Fixed random slope)
+mm3_4 <- suppressWarnings(glmer(
+  vote_strict ~ lon_centered + si_centered * official_turnout_lag + polint_centered + partisanship + gender + age_decades_centered + educ + hhincome + (1 + lon_centered | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+```
+
+
+#### Typology and robustness of typology
+
+```{r}
+mm4_typo <- suppressWarnings(glmer(
+  vote_strict ~ sil_type + gender + age_decades_centered + educ + hhincome + (1 | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+
+mm4_robust <- suppressWarnings(glmer(
+  vote_strict ~ sil_exhaustive + gender + age_decades_centered + educ + hhincome + (1 | cntry), 
+  data = mlm_df, family = binomial, weights = weights_scaled,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+))
+```
+
+
+### Save all the models
+
+```{r}
+saveRDS(test0_intercept, here("Input", "Models", "test0_intercept.rds"))
+saveRDS(test1_lon_slope, here("Input", "Models", "test1_lon_slope.rds"))
+saveRDS(test2_both_slopes, here("Input", "Models", "test2_both_slopes.rds"))
+
+saveRDS(mm1, here("Input", "Models", "mm1.rds"))
+saveRDS(mm2, here("Input", "Models", "mm2.rds"))
+saveRDS(mm3, here("Input", "Models", "mm3.rds"))
+
+saveRDS(mm3_1, here("Input", "Models", "mm3_1.rds"))
+saveRDS(mm3_2, here("Input", "Models", "mm3_2.rds"))
+saveRDS(mm3_3, here("Input", "Models", "mm3_3.rds"))
+saveRDS(mm3_4, here("Input", "Models", "mm3_4.rds"))
+
+saveRDS(mm4_typo, here("Input", "Models", "mm4_typo.rds"))
+saveRDS(mm4_robust, here("Input", "Models", "mm4_robust.rds"))
+```
+
+
+## Regression tables
+
+```{r}
+# Labels
+
+# Table S1 
+lbl_s1 <- c("Intercept", "Loneliness (Centered)", "Social Isolation (Centered)", "Gender: Female", 
+            "Age (Decades)", "Education: Medium", "Education: High", 
+            "Income: Coping", "Income: Difficult", "Income: Very Difficult")
+
+# Table 1 (MM1, MM2, MM3 merged)
+lbl_t1 <- c("Intercept", "Loneliness (Centered)", "Official Turnout (Lag)", "Gender: Female", 
+            "Age (Decades)", "Education: Medium", "Education: High", 
+            "Income: Coping", "Income: Difficult", "Income: Very Difficult", 
+            "Social Isolation (Centered)", "Political Interest", "Partisanship: Yes")
+
+# Table S2 
+lbl_s2 <- c("Intercept", "Loneliness (Centered)", "Social Isolation (Centered)", "Political Interest", 
+            "Partisanship: Yes", "Official Turnout (Lag)", "Gender: Female", "Age (Decades)", 
+            "Education: Medium", "Education: High", "Income: Coping", "Income: Difficult", 
+            "Income: Very Difficult", "Loneliness × Social Isolation")
+
+# Table S3 
+lbl_s3 <- c("Intercept", "Loneliness (Centered)", "Social Isolation (Centered)", "Political Interest", 
+            "Partisanship: Yes", "Official Turnout (Lag)", "Gender: Female", "Age (Decades)", 
+            "Education: Medium", "Education: High", "Income: Coping", "Income: Difficult", "Income: Very Difficult")
+
+# Table S4 
+lbl_s4 <- c("Intercept", "Loneliness (Centered)", "Official Turnout (Lag)", "Social Isolation (Centered)", 
+            "Political Interest", "Partisanship: Yes", "Gender: Female", "Age (Decades)", 
+            "Education: Medium", "Education: High", "Income: Coping", "Income: Difficult", 
+            "Income: Very Difficult", "Loneliness × Official Turnout")
+
+# Table S5 
+lbl_s5 <- c("Intercept", "Loneliness (Centered)", "Social Isolation (Centered)", "Official Turnout (Lag)", 
+            "Political Interest", "Partisanship: Yes", "Gender: Female", "Age (Decades)", 
+            "Education: Medium", "Education: High", "Income: Coping", "Income: Difficult", 
+            "Income: Very Difficult", "Social Isolation × Official Turnout")
+
+# Table 2 
+lbl_t2 <- c("Intercept", "Typology: Lonely & Connected", "Typology: Isolated & Not Lonely", 
+            "Typology: Double Disadvantage", "Gender: Female", "Age (Decades)", 
+            "Education: Medium", "Education: High", "Income: Coping", "Income: Difficult", "Income: Very Difficult")
+
+# Table S6 
+lbl_s6 <- c("Intercept", "Typology: None & Mid ISO", "Typology: None & High ISO", 
+            "Typology: Some & Low ISO", "Typology: Some & Mid ISO", "Typology: Some & High ISO", 
+            "Typology: Most & Low ISO", "Typology: Most & Mid ISO", "Typology: Most & High ISO", 
+            "Gender: Female", "Age (Decades)", "Education: Medium", "Education: High", 
+            "Income: Coping", "Income: Difficult", "Income: Very Difficult")
+```
+
+
+```{r}
+# export tabs
+
+# Justify slopes
+tab_model(
+  test0_intercept, test1_lon_slope, test2_both_slopes,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s1,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = c("Test 0: Intercept Only", "Test 1: Loneliness Slope", "Test 2: Full Random Slopes"),
+  file = here("Output", "Supplement", "Tables", "Justify_Random_Slopes.doc")
+)
+
+# 1: Nested MM1, MM2, MM3
+tab_model(
+  mm1, mm2, mm3,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_t1,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = c("MM1: Loneliness Base", "MM2: Add Isolation", "MM3: Full Model"),
+  file = here("Output", "Supplement", "Tables", "MM1_MM3.doc")
+)
+
+# 2: Robustness (interaction) 
+tab_model(
+  mm3_1,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s2,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM3_1: Interaction",
+  file = here("Output", "Supplement", "Tables", "mm3_1.doc")
+)
+
+# 3: Robustness (other DV) 
+tab_model(
+  mm3_2,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s3,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM3_2: Self-Reported Vote",
+  file = here("Output", "Supplement", "Tables", "mm3_2.doc")
+)
+
+# 4: Robustness (cross-level lon x turnout) 
+tab_model(
+  mm3_3,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s4,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM3_3: Cross-Level",
+  file = here("Output", "Supplement", "Tables", "mm3_3.doc")
+)
+
+# 5: Robustness (cross-level SI x turnout) ---
+tab_model(
+  mm3_4,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s5,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM3_4: Cross-Level",
+  file = here("Output", "Supplement", "Tables", "Table_S5_CrossLevel_SI.doc")
+)
+
+# 6: Typology 
+tab_model(
+  mm4_typo,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_t2,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM4: Typology Base",
+  file = here("Output", "Supplement", "Tables", "mm4_typo.doc")
+)
+
+# 7: Typology exhaustive
+tab_model(
+  mm4_robust,
+  show.re.var = TRUE, show.icc = TRUE,
+  pred.labels = lbl_s6,
+  p.style = "scientific_stars",
+  show.p = F,
+  dv.labels = "MM4: Typology Exhaustive",
+  file = here("Output", "Supplement", "Tables", "mm4_robust.doc")
+)
+```
+
+
+## Plots
+
+### Caterpillar 
+
+```{r}
+# Base: random effects plots
+re_plots <- plot_model(
+  mm3, type = "re", 
+  sort.est = "sort.all", 
+  grid = FALSE, 
+  colors = magma_pal[1],
+  dot.size = 2.5, 
+  line.size = 0.8,
+  transform = "exp"
+)
+
+# From ISO to full names
+clean_country_labels <- function(x) {
+  countrycode(x, origin = "iso2c", destination = "country.name")
+}
+
+# Extract and polish panel A: RI
+p_intercepts <- re_plots[[1]] + 
+  scale_x_discrete(labels = clean_country_labels) +
+  theme_paper() +
+  labs(
+    title = "Baseline turnout by country",
+    y = "Deviation from Average Penalty (Odds Ratio)", 
+    x = ""
+  ) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey90", linetype = "dashed"),
+    axis.text.y = element_text(size = 10, face = "bold") 
+  )
+
+# Extract and polish panel B: loneliness slopes
+p_lon_slopes <- re_plots[[2]] + 
+  scale_x_discrete(labels = clean_country_labels) +
+  theme_paper() +
+  labs(
+    title = "Loneliness penalty by country",
+    y = "Deviation from Average Penalty (Log-Odds)", 
+    x = ""
+  ) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey90", linetype = "dashed"),
+    axis.text.y = element_text(size = 10, face = "bold",
+                               ) 
+  )
+
+# Combine 
+figure1_combined <- p_intercepts + p_lon_slopes + 
+  plot_layout(ncol = 2)
+
+# Save  
+ggsave(
+  here("Output", "Article", "Caterpillar.png"), 
+  figure1_combined, 
+  width = 12, 
+  height = 16, 
+  dpi = 600,
+  bg = "white"
+)
+
+```
+
+### Predicted turnout 4 panels
+
+```{r}
+# Helper function
+create_minmax_plot <- function(model, term, labels, plot_title, dot_color) {
+  # predictions
+  df <- as.data.frame(ggpredict(model, terms = paste0(term, " [minmax]")))
+  
+  ggplot(df, aes(x = factor(x, levels = unique(x), labels = labels), y = predicted)) +
+    # Reference line 
+    geom_hline(yintercept = mean(df$predicted), color = "grey60", alpha = 0.5, linewidth = 1.2, linetype = "dashed") +
+    # Point range for CIs
+    geom_pointrange(aes(ymin = conf.low, ymax = conf.high),
+                    linewidth = 0.8, fatten = 2.5, color = dot_color) +
+    # Y-axis 
+    scale_y_continuous(limits = c(0.35, 0.9), breaks = seq(0.4, 0.9, .1), labels = scales::percent) +
+    labs(x = NULL, y = "Pr(Turnout)", title = plot_title) +
+    theme_paper() + 
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey95"),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 16), # Bumped from 13 to 16
+      axis.title.y = element_text(size = 14, face = "bold"),            # Bumped up the Pr(Turnout) label
+      axis.text = element_text(color = "black", size = 12),             # Bumped general tick numbers to 12
+      axis.text.x = element_text(angle = 0, hjust = 0.5, size = 13, face = "bold") # Flattened, centered, and enlarged the Min/Max labels!
+    )
+}
+
+# Generate 
+# Panel A: Loneliness
+p_A <- create_minmax_plot(mm3, "lon_centered", c("Min.\nLoneliness", "Max.\nLoneliness"), "Loneliness", magma_pal[4])
+
+# Panel B: Social Isolation
+p_B <- create_minmax_plot(mm3, "si_centered", c("Min.\nIsolation", "Max.\nIsolation"), "Social Isolation", magma_pal[2])
+
+# Panel C: Political Interest
+p_C <- create_minmax_plot(mm3, "polint_centered", c("Min.\nInterest", "Max.\nInterest"), "Political Interest", magma_pal[5])
+
+# Panel D: Partisanship
+p_D <- create_minmax_plot(mm3, "partisanship", c("Party Closeness:\nNo", "Party Closeness:\nYes"), "Party Closeness", magma_pal[1])
+
+# Together
+figure2 <- (p_A + p_B) / (p_C + p_D) + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(face = "bold", size = 18))
+
+# Save 
+ggsave(here("Output", "Article", "pred_prob.png"), plot = figure2, width = 12, height = 16, dpi = 600)
+```
+
+### Typo plot
+
+```{r}
+# predictions 
+df_typo <- as.data.frame(ggpredict(mm4_typo, terms = "sil_type"))
+
+# Plot
+p_typo <- ggplot(df_typo, aes(x = reorder(x, -predicted), y = predicted, color = x)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), linewidth = 1.2, fatten = 3) +
+  
+  # Y axis 
+  scale_y_continuous(labels = scales::percent, limits = c(0.4, 0.7), breaks = seq(0.4, 0.7, 0.1)) +
+  
+  # colors
+  scale_color_manual(values = c(magma_pal[1], magma_pal[2], magma_pal[4], magma_pal[5])) +
+  
+  # injects \n 
+  scale_x_discrete(labels = function(lbl) gsub(", ", ",\n", lbl)) +
+  
+  labs(
+    x = NULL, 
+    y = "Pr(Turnout)",
+  ) +
+  theme_paper() +
+  theme(
+    legend.position = "none", 
+    
+    # Graphical settings 
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    
+    # Very light grid for the Y scale
+    panel.grid.major.y = element_line(color = "grey95"),
+    
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16), 
+    axis.title.y = element_text(size = 14, face = "bold"),
+    axis.text = element_text(color = "black", size = 12),
+    
+    # Horizontal, centered, and enlarged X-axis
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 13, face = "bold") 
+  )
+
+# 3. Save
+ggsave(here("Output", "Article", "Figure3_Typology.png"), p_typo, width = 9, height = 6, dpi = 600)
+```
+

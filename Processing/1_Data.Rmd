@@ -1,7 +1,5 @@
 ---
 title: "1_Data"
-author: "Arturo Bertero"
-date: "2026-02-09"
 output: html_document
 ---
 
@@ -19,7 +17,6 @@ p_load(tidyverse, here, haven, countrycode, readxl)
 ```{r}
 #load ess 11
 raw_data <- read_dta(here("Input", "ESS11e04_1.dta"))
-raw_data$clsprty
 ```
 
 # Processing
@@ -37,8 +34,8 @@ lon_turn_df <- raw_data %>%
     anweight, # weights
     
     # Dependent Variables
-    vote = vote, # did u vote?
-    starts_with("prtvt"), # Capture all country-specific party variables 
+    vote = vote, # vote?
+    starts_with("prtvt"), # country-specific party variables 
     # Plus the specific ones for de and lt
     any_of(c("prtvgde1", "prtvgde2", "prtvclt1", "prtvclt2", "prtvclt3")),
     
@@ -57,38 +54,44 @@ lon_turn_df <- raw_data %>%
     educ = edulvlb,
     hhincome = hincfel,
     health = health,
-    polint = polintr,   # Political interest (Interests in EU/Politics)
-    partisanship = clsprty   # Particular party closeness (Partisanship proxy)
+    polint = polintr,   # Political interest 
+    partisanship = clsprty   # party closeness 
   )
-
-
 
 ```
 
 ## Var cleaning
 
 ```{r}
-# 1. Master Processing and Recoding Chunk
+# Recoding Chunk
 lon_turn_df <- lon_turn_df %>%
+  # Strip all haven labels 
+  mutate(across(starts_with("prtv"), ~ as.numeric(zap_labels(.)))) %>%
+  
+  # anything >= 60 becomes NA
+  mutate(across(starts_with("prtv"), ~ if_else(. >= 60, NA_real_, .))) %>%
+  
+  # Coalesce
   mutate(
-    # --- A: DVs & Party Recall ---
-    reported_party_num = coalesce(
-      zap_labels(prtvgde1), 
-      zap_labels(prtvclt1),
-      !!!lapply(select(., starts_with("prtv")), zap_labels)
-    ),
+    reported_party_num = coalesce(!!!select(., starts_with("prtv")))
+  ) %>%
+  
+  # Clean the base vote variable (self-reported vote)
+  mutate(
     vote = case_when(
       vote == 1 ~ 1,
       vote == 2 ~ 0,
-      TRUE ~ NA_real_ # Recodes 3 (Not eligible) and NAs to NA
+      TRUE ~ NA_real_ # Drops NAs
     ),
+    
+  # vote-strict (succesfull vote-recall)
     vote_strict = case_when(
       is.na(vote) ~ NA_real_,
       vote == 1 & !is.na(reported_party_num) ~ 1,
       TRUE ~ 0
     ),
 
-    # --- B: Loneliness (Clean, Collapse, Numeric) ---
+    # Loneliness 
     lon_orig = as_factor(lon), 
     lon = fct_recode(lon_orig, NULL = "Refusal", NULL = "Don't know", NULL = "No answer") %>% fct_drop(),
     lon = fct_collapse(lon,
@@ -99,7 +102,7 @@ lon_turn_df <- lon_turn_df %>%
     lon = fct_relevel(lon, "None/Almost none", "Some of the time", "Most/All the time"),
     lon_n = as.numeric(lon),
 
-    # --- C: Social Isolation (SI) Dummies (1 = Isolated) ---
+    # Social isolation dummies 
     hhsize_iso = case_when(hhsize == 1 ~ 1, hhsize > 1 ~ 0, TRUE ~ NA_real_),
     meet_iso    = if_else(meet <= 2, 1, 0),
     relig_iso   = if_else(relig >= 5, 1, 0),
@@ -107,30 +110,27 @@ lon_turn_df <- lon_turn_df %>%
     discuss_iso = if_else(discuss <= 1, 1, 0),
     unemp_iso   = if_else(unemployed == 1, 1, 0),
 
-    # --- D: Revision Variables (Partisanship & Pol Int) ---
+    # Prty cloeseness
     partisanship = case_when(
       partisanship == 1 ~ 1,
       partisanship == 2 ~ 0,
-      TRUE ~ NA_real_ # Handles Refusals and Don't knows
+      TRUE ~ NA_real_ 
     ),
     
-    # Reverse ESS scale once: 1=Low, 4=High [cite: 2026-02-05]
+    # pol_int: reverse polarity
     polint_n = 5 - as.numeric(polint),
     
-    # Restore the descriptive factor with the new logical order
+    # Redo factor
     polint = factor(polint_n, 
                     levels = 1:4, 
                     labels = c("Not at all", "Hardly", "Quite", "Very")),
-    
-    # Center the correctly flipped numeric variable
-    polint_centered = polint_n - mean(polint_n, na.rm = TRUE),
 
-    # --- E: Controls ---
+    # Controls
     gender = as_factor(gender) %>% fct_recode(NULL = "No answer") %>% fct_drop(),
     health = as_factor(health),
     hhincome = as_factor(hhincome) %>% fct_recode(NULL = "Don't know", NULL = "Refusal", NULL = "No answer") %>% fct_drop(),
     
-    # Education 3-level grouping
+    # Education 3-level 
     educ_raw = as_factor(educ),
     educ = case_when(
       educ_raw %in% c("Not completed ISCED level 1", 
@@ -143,40 +143,35 @@ lon_turn_df <- lon_turn_df %>%
     ) %>% factor(levels = c("Low", "Medium", "High"))
   ) %>%
   
-  # 2. Final Variable Selection
+  # Final vars
   select(
     cntry:anweight, # ESS design vars
     vote, vote_strict, # DVs
     lon_orig, lon, lon_n, # Loneliness
     hhsize_iso, meet_iso, relig_iso, volunt_iso, discuss_iso, unemp_iso, # SI markers
-    partisanship, polint, polint_n, polint_centered, # Revision variables
+    partisanship, polint, polint_n, # pol vars (polint_centered removed from here)
     gender, age, educ, hhincome, health # Controls
   )
 
-# 3. Quick Inspection
+# Inspection
 lon_turn_df %>%
   select(vote, lon, polint_n, educ) %>%
   map(~table(.x, useNA = "always"))
 ```
 
 
-
 ## SI index and SIL typology
 
 ```{r}
-# 1. Build the additive index (Original 0-7 scale)
+# SI
+
+# Additive index 
 lon_turn_df <- lon_turn_df %>%
   mutate(
     si_index_raw = rowSums(select(., ends_with("_iso")), na.rm = FALSE)
   )
 
-# 2. Print the problematic raw table (to document why we are recoding)
-# This serves as your "Evidence of Sparsity" for reviewers
-print("Raw SI Index Distribution (Problematic):")
-table(lon_turn_df$cntry, lon_turn_df$si_index_raw)
-
-# 3. Recode into 3 Levels: 0-1 (Low), 2-3 (Mid), 4+ (High)
-# 1. Recode SI into the 3 proposed levels
+# Recode into 3 Levels [0-1 (Low), 2-3 (Mid), 4+ (High)]
 lon_turn_df <- lon_turn_df %>%
   mutate(
     si_levels = case_when(
@@ -187,14 +182,12 @@ lon_turn_df <- lon_turn_df %>%
     ) %>% factor(levels = c("0-1: Low ISO", "2: Mid ISO", "3+: High ISO"))
   )
 
-# 2. Check the new distribution by country
-# This should show much healthier 'High' cells for CH, IS, and SE
-print("Revised 3-Level SI Distribution (0-1, 2, 3+):")
-table(lon_turn_df$cntry, lon_turn_df$si_levels)
 ```
 
 ```{r}
 # SI-L
+
+# Create at median
 lon_turn_df <- lon_turn_df %>%
   group_by(cntry) %>%
   mutate(
@@ -220,15 +213,12 @@ lon_turn_df <- lon_turn_df %>%
   ) %>%
   ungroup()
 
-# Audit the new distribution
-table(lon_turn_df$sil_type)
-table(lon_turn_df$cntry, lon_turn_df$sil_type)
 ```
 
 ## Need for imputation?
 
 ```{r}
-# 1. Variable-level Missingness (Percentages)
+# Variable-level missingness (percentages)
 miss_summary <- lon_turn_df %>%
   summarise(across(everything(), ~sum(is.na(.x)) / n() * 100)) %>%
   pivot_longer(everything(), names_to = "Variable", values_to = "Percent_Missing") %>%
@@ -237,20 +227,16 @@ miss_summary <- lon_turn_df %>%
 print(miss_summary)
 ```
 
-
 ```{r}
-# 2. Case-level Missingness (How many variables is each person missing?)
-# This helps us identify "bad" respondents who skipped half the survey
+# Case-level missingness (how many variables is each person missing?)
 lon_turn_df <- lon_turn_df %>%
   mutate(miss_count = rowSums(is.na(select(., -starts_with("vote")))))
 
 table(lon_turn_df$miss_count)
 ```
 
-
 ```{r}
-# 3. Country-level Audit
-# This is crucial because ESS data quality varies by national context 
+# Country-level audit
 country_miss <- lon_turn_df %>%
   group_by(cntry) %>%
   summarise(
@@ -262,60 +248,34 @@ country_miss <- lon_turn_df %>%
 print(country_miss)
 ```
 
-## Center vars
 
-```{r}
-lon_turn_df <- lon_turn_df %>%
-  group_by(cntry) %>%
-  mutate(
-    # 1. Age: Already centered relative to country mean
-    age_centered = age - mean(age, na.rm = TRUE),
-    
-    # 2. Political Interest: Center for interaction terms (Revision requirement)
-    # Higher value = More interest (1-4 scale) [cite: 2026-02-05]
-    polint_centered = polint_n - mean(polint_n, na.rm = TRUE),
-    
-    # 3. Loneliness: Center the 3-level numeric scale
-    lon_centered = lon_n - mean(lon_n, na.rm = TRUE),
-    
-    # 4. Social Isolation: Center the raw 0-6 index
-    si_centered = si_n - mean(si_n, na.rm = TRUE)
-  ) %>%
-  ungroup()
-
-# Quick check: All means should be approx 0
-lon_turn_df %>%
-  select(ends_with("_centered")) %>%
-  summary()
-```
 ## Merging with turnout
 
 ```{r}
-# --- 1. Import and Process IDEA Official Turnout Data ---
-# We want the second-to-last election to act as a lagged control
-idea_lagged <- read_excel(here("Input", "idea.xlsx")) %>%
+# IDEA official turnout data
+idea_recent <- read_excel(here("Input", "idea.xlsx")) %>%
   select(ISO2, year, Voter_Turnout = `Voter Turnout`) %>%
   mutate(
+    # I call this official_turnout_lag 
     official_turnout_lag = as.numeric(gsub("%", "", Voter_Turnout)) / 100,
     election_year = as.numeric(substr(year, 1, 4))
   ) %>%
   group_by(ISO2) %>%
-  # Logic: Rank by year and pick the 2nd most recent
+  # Rank by year (descending), pick the most recent
   arrange(desc(election_year)) %>%
   mutate(rank = row_number()) %>%
-  filter(rank == 2) %>% 
+  filter(rank == 1) %>% 
   ungroup() %>%
   select(cntry = ISO2, official_turnout_lag)
 
-# --- 2. Merge with main dataset ---
+# Merge with main dataset
 lon_turn_df <- lon_turn_df %>%
-  left_join(idea_lagged, by = "cntry")
+  left_join(idea_recent, by = "cntry")
 
-# --- 3. Final Check before Saving ---
-# Ensure countries like BE (Belgium) have their high turnout lag recorded
+# Check 
 lon_turn_df %>%
   group_by(cntry) %>%
-  summarise(lag = mean(official_turnout_lag)) %>%
+  summarise(lag = mean(official_turnout_lag, na.rm = TRUE)) %>%
   print(n = Inf)
 ```
 

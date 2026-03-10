@@ -1,0 +1,6 @@
+"0","#clean"
+"0","rm(list = ls())"
+"0",""
+"0","library(""pacman"")"
+"0","p_load(tidyverse, here, haven, countrycode, readxl) "
+"0",""
