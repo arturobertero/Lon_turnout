@@ -1,0 +1,41 @@
+---
+title: "4_Figure_1"
+author: "Arturo Bertero"
+date: "2026-03-13"
+output: html_document
+---
+
+```{r}
+library(flextable)
+library(officer)
+library(here)
+
+typology <- data.frame(
+  ` ` = c("Low Social Isolation", "High Social Isolation"),
+  `Low Loneliness` = c(
+    "Socially Integrated",
+    "Solitary but Content"
+  ),
+  `High Loneliness` = c(
+    "Emotionally Disconnected",
+    "Socially Disconnected"
+  )
+)
+
+ft <- flextable(typology)
+ft <- bold(ft, part = "header")
+ft <- bold(ft, j = 1)
+ft <- align(ft, align = "center", part = "all")
+ft <- autofit(ft)
+
+doc <- read_docx()
+doc <- body_add_par(doc, "Typology of Social Isolation and Loneliness", style = "heading 1")
+doc <- body_add_flextable(doc, ft)
+
+print(
+  doc,
+  target = here("Output", "Article", "typology_table.docx")
+)
+```
+
+
