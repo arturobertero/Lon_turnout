@@ -8,7 +8,7 @@ output: html_document
 rm(list = ls())
 
 library("pacman")
-p_load(tidyverse, here, haven, countrycode, readxl) 
+p_load(tidyverse, here, haven, countrycode, readxl, summarytools) 
 
 ```
 
@@ -285,5 +285,36 @@ lon_turn_df %>%
 ```{r}
 # Export to RDS
 saveRDS(lon_turn_df, here("Input", "data_clean.rds"))
+```
+
+```{r}
+#dscriptives
+desc_df = lon_turn_df %>% 
+  select(
+    cntry, vote_strict:hhincome, si_index_raw:sil_type
+  )
+
+#Summary tool
+# global options 
+st_options(
+  plain.ascii = FALSE, 
+  style = "rmarkdown",
+  dfSummary.silent = TRUE 
+)
+
+# Generate the object
+desc_summary <- dfSummary(
+  desc_df,
+  graph.magnif = 0.75,  
+  valid.col = FALSE,    
+  na.col = TRUE         
+)
+
+# Save
+print(
+  desc_summary, 
+  method = "browser", 
+  file = here("Output", "Supplement", "Descriptive_Statistics.doc")
+)
 ```
 
