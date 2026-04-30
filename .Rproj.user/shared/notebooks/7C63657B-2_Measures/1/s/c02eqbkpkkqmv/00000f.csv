@@ -2,6 +2,7 @@
 "0","rm(list = ls())"
 "0",""
 "0","library(""pacman"")"
+"2","Warning: package ‘pacman’ was built under R version 4.4.3"
 "0","p_load(tidyverse, here, haven, countrycode, sjPlot, lme4, survey, psych,"
 "0","       GPArotation, car, readxl, ggcorrplot) "
 "0",""

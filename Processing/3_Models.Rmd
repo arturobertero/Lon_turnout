@@ -810,3 +810,110 @@ ggsave(here("Output", "Article", "Figure3_Typology.png"), p_typo, width = 9, hei
 p_typo$data
 ```
 
+
+### Exhaustive typo plot
+
+```{r}
+# some extra packages
+library(ggeffects)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(tidyr)
+library(patchwork) 
+
+
+# Take pred turnout
+pred_turnout <- ggpredict(mm4_robust, terms = "sil_exhaustive") %>%
+  as_tibble() %>%
+  rename(sil_exhaustive = x, predicted_turnout = predicted, conf_low = conf.low, conf_high = conf.high)
+
+# Calculate actual population share
+group_sizes <- mlm_df %>%
+  drop_na(vote_strict, sil_exhaustive, gender, age_decades_centered, educ, hhincome) %>%
+  count(sil_exhaustive) %>%
+  mutate(pop_share = n / sum(n))
+
+# Merge
+plot_df <- left_join(pred_turnout, group_sizes, by = "sil_exhaustive") %>%
+  mutate(
+    si_level = case_when(
+      grepl("0-1: Low ISO", sil_exhaustive) ~ "Low",
+      grepl("2: Mid ISO", sil_exhaustive) ~ "Mid",
+      grepl("3\\+: High ISO", sil_exhaustive) ~ "High"
+    ),
+    lon_level = case_when(
+      grepl("None/Almost none", sil_exhaustive) ~ "Low",
+      grepl("Some of the time", sil_exhaustive) ~ "Mid",
+      grepl("Most/All the time", sil_exhaustive) ~ "High"
+    )
+  )
+
+# fix x axis order
+plot_df$category_id <- reorder(plot_df$sil_exhaustive, desc(plot_df$predicted_turnout))
+
+# Plot 1: bubble chart
+p_main <- ggplot(plot_df, aes(x = category_id, y = predicted_turnout)) +
+  geom_errorbar(aes(ymin = conf_low, ymax = conf_high), width = 0.1, color = "grey60", alpha = 0.6) +
+  
+  # geom point
+  geom_point(aes(size = pop_share), fill = "#FFB74D", shape = 21, color = "white", stroke = 1.2) +
+  
+  # color of text
+  geom_text(aes(label = percent(pop_share, accuracy = 1)), color = "black", fontface = "bold", size = 3.5) +
+  
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_size_continuous(range = c(8, 26), guide = "none") +
+  labs(x = NULL, y = "Predicted Turnout Probability", title = NULL, subtitle = NULL) +
+  theme_paper() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linetype = "dashed"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    plot.margin = margin(t = 20, r = 20, b = -5, l = 20),
+    legend.position = "none"
+  )
+
+# Plot 2: heatmap
+axis_df <- plot_df %>%
+  select(category_id, si_level, lon_level) %>%
+  pivot_longer(cols = c(si_level, lon_level), names_to = "variable", values_to = "intensity") %>%
+  mutate(
+    variable = ifelse(variable == "si_level", "Social\nIsolation", "Loneliness"),
+    variable = factor(variable, levels = c("Loneliness", "Social\nIsolation")),
+    intensity = factor(intensity, levels = c("Low", "Mid", "High"))
+  )
+
+p_axis <- ggplot(axis_df, aes(x = category_id, y = variable, fill = intensity)) +
+  geom_tile(color = "white", linewidth = 1.5, width = 0.9, height = 0.9) +
+  geom_text(aes(label = intensity, color = intensity), fontface = "bold", size = 3.5) +
+  
+  # Traffic light colors 
+  scale_fill_manual(values = c("Low" = "#E0E0E0", "Mid" = "#FFB74D", "High" = "#E53935")) +
+  scale_color_manual(values = c("Low" = "black", "Mid" = "black", "High" = "white")) +
+  
+  theme_void() +
+  theme(
+    axis.text.y = element_text(face = "bold", color = "black", size = 9, hjust = 1, margin = margin(r = 5)),
+    legend.position = "none",
+    plot.caption = element_text(hjust = 0, face = "italic", color = "grey40", size = 9, margin = margin(t = 15)),
+    plot.margin = margin(t = 0, r = 20, b = 20, l = 20)
+  ) +
+  labs(caption = "Note: Bubble size indicates the percentage of the sample in each typology group.\nPredicted probabilities are population-averaged marginal effects, calculated holding controls at their means and generalizing across all countries.")
+
+# put togethert
+final_plot <- p_main / p_axis + plot_layout(heights = c(6, 1))
+
+# Save
+ggsave(
+  here("Output", "Supplement", "Figure_Targeting_Dilemma_HeatmapAxis.png"), 
+  final_plot, 
+  width = 12, 
+  height = 7.5, 
+  dpi = 600,
+  bg = "white"
+)
+```
+

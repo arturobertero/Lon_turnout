@@ -29,7 +29,7 @@
 "0","sil_composition_plot <- ggplot(plot_ready_sil, aes(x = cntry, y = prop, fill = sil_type)) +"
 "0","  geom_bar(stat = ""identity"", position = ""stack"", width = 0.75, color = ""white"", linewidth = 0.1) +"
 "0","  scale_y_continuous(labels = scales::percent, expand = c(0, 0)) +"
-"0","  scale_fill_viridis_d(option = ""plasma"", end = 0.9, direction = 1) +"
+"0","  scale_fill_viridis_d(option = ""plasma"", end = 0.9, direction = -1) +"
 "0","  labs("
 "0","    x = ""Country"","
 "0","    y = ""Proportion of Sample"","
