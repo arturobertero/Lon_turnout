@@ -665,25 +665,25 @@ p_scatter <- ggplot(scatter_df, aes(x = mean_lon, y = lon_dev_rel)) +
     panel.grid.major = element_line(color = "grey95")
   )
 
-# Save 
-ggsave(
-  here("Output", "Article", "Figure_Scatterplot_Loneliness.png"), 
-  p_scatter, 
-  width = 8,      
-  height = 3.9,   
-  dpi = 600,
-  bg = "white"
-)
-
-ggsave(
-  here("Output", "Article", "Figure_Scatterplot_Loneliness.pdf"), 
-  p_scatter, 
-  width = 8,      
-  height = 3.9,   
-  device = "pdf",
-  dpi = 600,
-  bg = "white"
-)
+# # Save: i am not saving this plot, we decided not to include it in the paper
+# ggsave(
+#   here("Output", "Article", "Figure_Scatterplot_Loneliness.png"), 
+#   p_scatter, 
+#   width = 8,      
+#   height = 3.9,   
+#   dpi = 600,
+#   bg = "white"
+# )
+# 
+# ggsave(
+#   here("Output", "Article", "Figure_Scatterplot_Loneliness.pdf"), 
+#   p_scatter, 
+#   width = 8,      
+#   height = 3.9,   
+#   device = "pdf",
+#   dpi = 600,
+#   bg = "white"
+# )
 ```
 
 
@@ -903,15 +903,16 @@ p_axis <- ggplot(axis_df, aes(x = category_id, y = variable, fill = intensity)) 
     legend.position = "none",
     plot.caption = element_text(hjust = 0, face = "italic", color = "grey40", size = 9, margin = margin(t = 15)),
     plot.margin = margin(t = 0, r = 20, b = 20, l = 20)
-  ) +
-  labs(caption = "Note: Bubble size indicates the percentage of the sample in each typology group.\nPredicted probabilities are population-averaged marginal effects, calculated holding controls at their means and generalizing across all countries.")
+  ) 
+# +
+#   labs(caption = "Note: Bubble size indicates the percentage of the sample in each typology # group.\nPredicted probabilities are population-averaged marginal effects, calculated holding controls at # their means and generalizing across all countries.")
 
 # put togethert
 final_plot <- p_main / p_axis + plot_layout(heights = c(6, 1))
 
 # Save
 ggsave(
-  here("Output", "Supplement", "Figure_Targeting_Dilemma_HeatmapAxis.png"), 
+  here("Output", "Article", "Figure_4.png"), 
   final_plot, 
   width = 12, 
   height = 7.5, 
