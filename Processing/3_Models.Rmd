@@ -816,6 +816,8 @@ p_typo$data
 This plot shows that the result of the main typo model presented in the article 
 are robust to any ways in which u cut the typology var.
 
+#### Main plot shown in the article
+
 ```{r}
 # some extra packages
 library(ggeffects)
@@ -921,6 +923,150 @@ ggsave(
 )
 
 ```
+
+
+##### Variants of that plot
+
+```{r}
+library(ggeffects)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(tidyr)
+library(patchwork) 
+
+# ==========================================
+# 1. PREPARE THE MASTER DATA
+# ==========================================
+pred_turnout <- ggpredict(mm4_robust, terms = "sil_exhaustive") %>%
+  as_tibble() %>%
+  rename(sil_exhaustive = x, predicted_turnout = predicted, conf_low = conf.low, conf_high = conf.high)
+
+group_sizes <- mlm_df %>%
+  drop_na(vote_strict, sil_exhaustive, gender, age_decades_centered, educ, hhincome) %>%
+  count(sil_exhaustive) %>%
+  mutate(pop_share = n / sum(n))
+
+plot_df <- left_join(pred_turnout, group_sizes, by = "sil_exhaustive") %>%
+  mutate(
+    si_level = case_when(
+      grepl("0-1: Low ISO", sil_exhaustive) ~ "Low",
+      grepl("2: Mid ISO", sil_exhaustive) ~ "Mid",
+      grepl("3\\+: High ISO", sil_exhaustive) ~ "High"
+    ),
+    lon_level = case_when(
+      grepl("None/Almost none", sil_exhaustive) ~ "Low",
+      grepl("Some of the time", sil_exhaustive) ~ "Mid",
+      grepl("Most/All the time", sil_exhaustive) ~ "High"
+    ),
+    # Lock explicit factor levels so the boss's systematic ordering works perfectly
+    si_level = factor(si_level, levels = c("Low", "Mid", "High")),
+    lon_level = factor(lon_level, levels = c("Low", "Mid", "High"))
+  )
+
+# ==========================================
+# 2. THE MASTER PLOT GENERATOR FUNCTION
+# ==========================================
+build_final_plot <- function(data, order_type = "turnout") {
+  
+  df <- data 
+  
+  # --- LOGIC: ORDERING ---
+  if (order_type == "turnout") {
+    # Orders purely by the Y-axis value (descending predicted turnout)
+    df$category_id <- reorder(df$sil_exhaustive, desc(df$predicted_turnout))
+    
+  } else if (order_type == "systematic") {
+    # THE BOSS'S PATTERN: Primary sort by SI (Blocks of 3), Secondary sort by Loneliness
+    df <- df %>% arrange(si_level, lon_level)
+    df$category_id <- factor(df$sil_exhaustive, levels = df$sil_exhaustive)
+  }
+  
+  # --- TOP PLOT: BUBBLE CHART ---
+  p_main <- ggplot(df, aes(x = category_id, y = predicted_turnout)) +
+    geom_errorbar(aes(ymin = conf_low, ymax = conf_high), width = 0.1, color = "grey60", alpha = 0.6) +
+    
+    # Bubble size is proportional to Population Share
+    geom_point(aes(size = pop_share), fill = "#FFB74D", shape = 21, color = "white", stroke = 1.2) +
+    scale_size_continuous(range = c(8, 26), guide = "none") +
+    
+    # Text inside bubble is Predicted Turnout
+    geom_text(aes(label = percent(predicted_turnout, accuracy = 1)), color = "black", fontface = "bold", size = 3.5) +
+    
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(x = NULL, y = "Predicted Turnout Probability", title = NULL, subtitle = NULL) +
+    theme_paper() +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey90", linetype = "dashed"),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      plot.margin = margin(t = 20, r = 20, b = -5, l = 20),
+      legend.position = "none" # Stripped out completely
+    )
+  
+  # --- BOTTOM PLOT: THE 3-ROW HEATMAP ---
+  # Data for the Low/Mid/High colored tiles
+  axis_df_traits <- df %>%
+    select(category_id, si_level, lon_level) %>%
+    pivot_longer(cols = c(si_level, lon_level), names_to = "variable", values_to = "intensity") %>%
+    mutate(
+      variable = ifelse(variable == "si_level", "Social\nIsolation", "Loneliness"),
+      label = as.character(intensity),
+      fill_cat = as.character(intensity)
+    )
+  
+  # Data for the Population Share white tiles
+  axis_df_pop <- df %>%
+    select(category_id, pop_share) %>%
+    mutate(
+      variable = "Pop.\nShare",
+      intensity = "None",
+      label = percent(pop_share, accuracy = 1),
+      fill_cat = "None"
+    )
+  
+  # Combine them and lock the row order
+  axis_df <- bind_rows(axis_df_traits, axis_df_pop) %>%
+    mutate(
+      variable = factor(variable, levels = c("Pop.\nShare", "Loneliness", "Social\nIsolation")),
+      fill_cat = factor(fill_cat, levels = c("Low", "Mid", "High", "None"))
+    )
+  
+  p_axis <- ggplot(axis_df, aes(x = category_id, y = variable, fill = fill_cat)) +
+    geom_tile(color = "white", linewidth = 1.5, width = 0.9, height = 0.9) +
+    geom_text(aes(label = label, color = fill_cat), fontface = "bold", size = 3.5) +
+    
+    scale_fill_manual(values = c("Low" = "#E0E0E0", "Mid" = "#FFB74D", "High" = "#E53935", "None" = "white")) +
+    scale_color_manual(values = c("Low" = "black", "Mid" = "black", "High" = "white", "None" = "black")) +
+    
+    theme_void() +
+    theme(
+      axis.text.y = element_text(face = "bold", color = "black", size = 9, hjust = 1, margin = margin(r = 5)),
+      legend.position = "none",
+      plot.margin = margin(t = 0, r = 20, b = 20, l = 20)
+    )
+  
+  # --- STITCH & RETURN ---
+  return(p_main / p_axis + plot_layout(heights = c(5, 1.5)))
+}
+
+# ==========================================
+# 3. GENERATE AND SAVE THE 2 FINAL PLOTS
+# ==========================================
+
+# PLOT 1: Ordered by Predicted Turnout
+final_turnout_plot <- build_final_plot(plot_df, order_type = "turnout")
+ggsave(here("Output", "Article", "Figure_Final_Turnout_Order.png"), final_turnout_plot, width = 12, height = 7.5, dpi = 600, bg = "white")
+
+# PLOT 2: Ordered by the Boss's Systematic Pattern
+final_systematic_plot <- build_final_plot(plot_df, order_type = "systematic")
+ggsave(here("Output", "Article", "Figure_Final_Systematic_Order.png"), final_systematic_plot, width = 12, height = 7.5, dpi = 600, bg = "white")
+```
+
+
+#### Plot for the presentation
 
 This is instead a plot we used for a presentation of this work, where we show 
 the interplay between how many people you target and the severity of SIL penalty 
